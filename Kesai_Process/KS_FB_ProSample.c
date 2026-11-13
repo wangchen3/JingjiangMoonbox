@@ -617,7 +617,7 @@ void KS_FB_ProSample(StPara_PduBroadcastUp* i_pstStPara_PduBroadcastUp,	//上行
 //			{
 #if KS_USE_CONF_ERR
 				//置信度误差接入(运行期双开关xEnableConfErr+xSwitchWrEn,ks_conf_err.h,人机
-				//data_RW.awRsv_RdWr[0] bit14/bit15下发):双开才上报融合值,否则原每圈值;
+				//data_RW.wConfSwitch bit14/bit15下发):双开才上报融合值,否则原每圈值;
 				//编译期宏KS_USE_CONF_ERR=0时完全回退原行为
 				//|wang.c+双置信度融合 2026.11.9.165510|移植回8.4+月影Pro 485开关下发 2026.11.13
 				if(xEnableConfErr && xSwitchWrEn)

@@ -681,7 +681,7 @@ static void ks_fly_reset(KsFlyRemover *pst)
 
 /* 运行时飞点开关定义(声明见ks_fly_remove.h,与置信度模块无关):
  * 默认0=回退旧二阶差分(上电原行为,人机上打开才启用新Theil-Sen剔除);
- * 此值为485通讯建立前的默认(人机data_RW.awRsv_RdWr[0] bit13下发,见modbus485.c)
+ * 此值为485通讯建立前的默认(人机data_RW.wConfSwitch bit13下发,见modbus485.c)
  * |wang.c+双置信度融合 2026.11.9.171753|移植回8.4+月影Pro 485开关下发|默认关 2026.11.13 */
 uint8_t xEnableNewFlyRemove = 0;
 

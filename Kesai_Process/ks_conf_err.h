@@ -4,7 +4,7 @@
  *  双置信度融合误差模块(8.4误差链路外挂,独立文件不改动calcerr.c)
  *  整体自老架构ARM(Slave_stm32_ARM,2026.11.12版)同名模块移植,算法逐行保留;
  *  运行期开关:老架构的观察/接入双开关(xEnableConfErr/xSwitchWrEn)已随月影Pro组态
- *  屏通讯一起移植回(人机data_RW.awRsv_RdWr[0] bit14/bit15下发,解析见modbus485.c),
+ *  屏通讯一起移植回(人机data_RW.wConfSwitch bit14/bit15下发,解析见modbus485.c),
  *  默认0/0=上电完全原行为(同老架构),人机打开才计算/接入;
  *  编译期总开关KS_USE_CONF_ERR仍为编译闸门,
  *  宏=0时本模块完全不参与编译,回退原行为|Yang.zj+置信度迁移8.4 2026.11.13.112036
@@ -42,7 +42,7 @@
 #define KS_USE_CONF_ERR		1
 
 /* 运行时双开关(自老架构ARM同名模块移植回,老架构485屏46059.03/.04下发;
- * 本工程对应人机data_RW.awRsv_RdWr[0] bit14/bit15,解析见modbus485.c):
+ * 本工程对应人机data_RW.wConfSwitch bit14/bit15,解析见modbus485.c):
  * 默认0/0=上电完全原行为(同老架构),485建立后人机开关为准
  * |wang.c+双置信度融合 2026.11.9.165510|开关语义解耦 2026.11.12|移植回8.4+月影Pro|默认全关 2026.11.13 */
 extern BYTE xEnableConfErr;		/* 置信度观察开关|=1计算置信度并送人机显示(dynaData_WO_Ex),
@@ -50,13 +50,13 @@ extern BYTE xEnableConfErr;		/* 置信度观察开关|=1计算置信度并送人
 extern BYTE xSwitchWrEn;		/* 置信度接入误差链开关|仅在xEnableConfErr=1时有效:
 								 * 再=1融合误差替换上报iVerror/iHerror|=0只显示不接入(默认) */
 
-/* 参数输入变量(485下发:人机data_RW.awRsv_RdWr[1]=wConfS50×0.001mm,bit14=1且
+/* 参数输入变量(485下发:人机data_RW.wConfS50×0.001mm,bit14=1且
  * 范围1~1000才写入,越界保持原值,见modbus485.c;调试器同样可改,写入后下一圈生效) */
 extern REAL rConfS50Mm;			/* CK一致度尺度s50输入@mm|默认0.08,s=s50时C=50%
 								 *|wang.c+双置信度融合 2026.11.9.165510 */
 
 /* 每圈置信度记录变量(0~100,有效圈刷新,丢失圈保持上次值便于观测;485显示挂点
- * dynaData_WO_Ex.aRsv_HignComm[9]=wConfPack高低字节打包,见modbus485.c的KS_SetData_485) */
+ * dynaData_WO_Ex.wConfPack高低字节打包,见modbus485.c的KS_SetData_485) */
 extern REAL rConfLastRevV;		/* 纵向本圈融合置信度F×100|wang.c+双置信度融合 2026.11.9.165510 */
 extern REAL rConfLastRevH;		/* 横向本圈融合置信度F×100|wang.c+双置信度融合 2026.11.9.165510 */
 

@@ -26,7 +26,7 @@
 #define KS_USE_NEW_FLY_REMOVE	1
 
 /* 运行时飞点开关(本模块自持,与置信度模块无关;自老架构ARM同名模块移植回,
- * 老架构485屏46059.02下发,本工程对应人机data_RW.awRsv_RdWr[0] bit13,见modbus485.c):
+ * 老架构485屏46059.02下发,本工程对应人机data_RW.wConfSwitch bit13,见modbus485.c):
  * 1=新Theil-Sen剔除
  * 0=运行时回退旧二阶差分KS_FB_PickOutFakePoint(默认,上电原行为)——Feed_V/H入口
  * 旁路原值直通判GOOD,calcerr.c内Feed调用点不用改,KS_FB_ProSample按同一开关

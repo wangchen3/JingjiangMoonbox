@@ -228,11 +228,13 @@ typedef struct tagDynaData_WO_485
 //只写动态变化数据,不稳定的数据
 typedef struct tagDynaData_WO_485_Ex
 {
-	uint16_t 	wSa;//预留
-	uint16_t 	aRsv_HignComm[119];//预留
-	//2026.11.13置信度显示占用[9]@人机MCGS只写通道131,变量wConfPack(同老架构6207):
-	//高8位=纵向融合置信度F(0~100)|低8位=横向F,屏侧脚本自行拆字节;观察开关关闭时送0
-	//打包见modbus485.c的KS_SetData_485(注意:人机工程122~130已绑iTorque_*,勿动)
+	uint16_t 	wSa;//预留@MCGS121
+	uint16_t 	aRsv_Torque[9];//人机工程已绑iTorque_*/iVel_*扭矩显示(MCGS122~130),ARM不写,勿动
+	//2026.11.13置信度显示(自老架构6207挂点移植,打包见modbus485.c的KS_SetData_485)
+	uint16_t 	wConfPack;//置信度@MCGS只写通道131:高8位=纵向融合置信度F(0~100取整钳位)
+						//|低8位=横向F,屏侧脚本自行拆字节(V=wConfPack/256,H=wConfPack%256);
+						//观察开关bit14关闭时送0(完全原行为,同老架构)
+	uint16_t 	aRsv_HignComm[109];//预留@MCGS132~240
 
 }DynaData_WO_485_Ex,*LP_DynaData_WO_485_Ex;
 
@@ -420,12 +422,14 @@ typedef struct tagData_RW
 	uint16_t	wStsBit_RO;//只读的状态bit|/.0 横向编码器有效|/.1横向电机报警
 	uint32_t 	dwEncValue_Hor;//横向编码器值@通讯获取|按照4字节获取@2025.10.17.092113
 
-
-	uint16_t	awRsv_RdWr[64];	//先预留着-双向区域
-	//2026.11.13飞点/置信度开关下发占用([0]@MCGS读写3177开关位区:bit13=飞点独立开关
-	//xEnableNewFlyRemove|bit14=置信度观察开关xEnableConfErr|bit15=接入开关xSwitchWrEn;
-	//[1]@MCGS3178=wConfS50,CK一致度尺度s50输入,单位0.001mm,范围1~1000),
-	//解析见modbus485.c的KsUpdateDataRw;人机侧3177的bit0~3/8~12已被锁/点动/压合占用
+	//2026.11.13飞点/置信度开关下发(自老架构KS_FB_VISU.c移植,解析见modbus485.c的KsUpdateDataRw)
+	uint16_t	wConfSwitch;//开关位区@MCGS读写3177:bit13=飞点独立开关xEnableNewFlyRemove
+						//|bit14=置信度观察开关xEnableConfErr|bit15=接入开关xSwitchWrEn
+						//(人机主权,ARM默认全0=上电原行为;bit0~3/8~12人机已占,勿动)
+	uint16_t	wConfS50;	//CK一致度尺度s50输入,单位0.001mm(80=0.08mm默认),
+						//有效范围1~1000,越界ARM保持原值,bit14=1时才生效,下一圈生效
+	uint16_t	awRsv_RdWr[62];	//先预留着-双向区域
+	//2026.11.13飞点/置信度开关下发占用 wConfSwitch+wConfS50|64->62
 	//2026.1.27.165628 数据整合|67->64
 	//2025.12.26.132813||增加压力操作2个字节----68->67
 	//2025.8.8.143722+ wAccButton_Count  wHz_UnitHotWind2_CurrRD|83->68
