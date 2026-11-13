@@ -8,6 +8,11 @@
 #include "usart.h"
 #include "tim.h"
 #include "string.h"//内存操作
+//飞点/置信度运行期开关与置信度显示(自老架构KS_FB_VISU.c移植到区引擎,开关位在
+//data_RW.awRsv_RdWr[0] bit13~15,显示在dynaData_WO_Ex.aRsv_HignComm[9~11])
+//|置信度/飞点485显示+开关下发 2026.11.13
+#include "ks_fly_remove.h"
+#include "ks_conf_err.h"
 
 
 
@@ -2796,6 +2801,32 @@ void KsUpdateDataRw(uint8_t xHmiToLocal,
 			i_pstStAxisParam->xHorMotorAlarm 				=KSGetDataBit(&i_pstVisuCommData->data_RW.wStsBit_RO,1);
 			i_pstStAxisParam->dwEncValue_Hor				=i_pstVisuCommData->data_RW.dwEncValue_Hor;
 
+			//飞点/置信度运行期开关与s50参数下发解析(自老架构KS_FB_VISU.c移植;月影Pro对应
+			//通道:awRsv_RdWr[0]=MCGS读写3177的bit13/14/15,awRsv_RdWr[1]=MCGS3178=wConfS50)
+			//开关语义(2026.11.12解耦,飞点/置信度互不耦合):
+			//  bit13=飞点独立开关:1=新Theil-Sen剔除|0=回退旧二阶差分(默认,上电原行为),
+			//       翻转由ks_fly_remove内部检测并自动复位剔除器,不经过任何使能位;
+			//  bit14=置信度观察开关:1=计算置信度并送人机显示(dynaData_WO_Ex),误差链按bit15;
+			//  bit15=接入开关:仅bit14=1时有效,再=1融合误差才替换上报误差链;
+			//s50单位0.001mm,有效范围1~1000,越界保持原值,bit14=1时才写入,下一圈生效
+			//注意:开关为人机主权(同老架构),ARM默认全关(0/0/0)与上电整区写入人机的0一致,
+			//屏显与实际状态天然同步;人机侧开关初值设0即可
+			//|置信度/飞点485开关下发|默认全关 2026.11.13
+#if KS_USE_NEW_FLY_REMOVE
+			xEnableNewFlyRemove = KSGetDataBit(&i_pstVisuCommData->data_RW.awRsv_RdWr[0],13) ? 1 : 0;
+#endif
+#if KS_USE_CONF_ERR
+			{
+				uint16_t wConfS50_RX = i_pstVisuCommData->data_RW.awRsv_RdWr[1];
+				xEnableConfErr = KSGetDataBit(&i_pstVisuCommData->data_RW.awRsv_RdWr[0],14) ? 1 : 0;
+				xSwitchWrEn = KSGetDataBit(&i_pstVisuCommData->data_RW.awRsv_RdWr[0],15) ? 1 : 0;
+				if (xEnableConfErr && wConfS50_RX >= 1 && wConfS50_RX <= 1000)
+				{
+					rConfS50Mm = (REAL)wConfS50_RX / 1000.0f;//s50输入mm(s=s50时CK置信度C=50%)
+				}
+			}
+#endif
+
 		}//轴id被写0了不更新本地值
 	}
 	else//本地写入到人机
@@ -3015,10 +3046,34 @@ void KS_SetData_485(
 	i_pstVisuCommData->dynaData_WO.uiPeakValue_t2=i_pstStAxisParam->uiPeakValue_t2;
 	i_pstVisuCommData->dynaData_WO.uiSource_Light_T1_Cur=(uint16_t)(i_pstStGlobalParam->rSource_Light_T1_Cur * 1000);
 	i_pstVisuCommData->dynaData_WO.uiSource_Light_T2_Cur=(uint16_t)(i_pstStGlobalParam->rSource_Light_T2_Cur * 1000);
-	//2025.09.05.164039//xi.hy+
-	i_pstVisuCommData->dynaData_WO.iPos_HorzManuPreReg=i_pstStAxisParam->iPos_HorzManuPreReg;
-	//2025.12.02.103119//自动聚焦中的当前峰值
-	i_pstVisuCommData->dynaData_WO.uiPeakCur_AutoFocus=i_pstStAxisParam->uiPeakCur_AutoFocus;
+		//2025.09.05.164039//xi.hy+
+		i_pstVisuCommData->dynaData_WO.iPos_HorzManuPreReg=i_pstStAxisParam->iPos_HorzManuPreReg;
+		//2025.12.02.103119//自动聚焦中的当前峰值
+		i_pstVisuCommData->dynaData_WO.uiPeakCur_AutoFocus=i_pstStAxisParam->uiPeakCur_AutoFocus;
+
+#if KS_USE_CONF_ERR
+		/**************************************只写快速区:置信度显示*****************************************/
+		//自老架构KS_FB_VISU.c的6206挂点逐行移植(协议6206=MCGS6207),本工程落在
+		//dynaData_WO_Ex.aRsv_HignComm[9]@人机MCGS只写通道131,变量wConfPack:
+		//  高8位=纵向融合置信度F(0~100四舍五入钳位)|低8位=横向F(同上),
+		//  屏侧脚本自行拆字节:纵向F=wConfPack/256,横向F=wConfPack%256(同老架构);
+		//观察开关bit14=1才显示,bit14=0填0(完全原行为,同老架构)
+		//|wang.c+开关通讯接入 2026.11.10.160000|仅bit3=1显示 2026.11.12|移植8.4+月影Pro 2026.11.13
+		{
+			uint16_t wConfPack = 0;
+			uint16_t uiConfTmp;
+			if (xEnableConfErr)
+			{
+				uiConfTmp = (uint16_t)(rConfLastRevV + 0.5f);
+				if (uiConfTmp > 100) uiConfTmp = 100;
+				wConfPack = (uint16_t)(uiConfTmp << 8);
+				uiConfTmp = (uint16_t)(rConfLastRevH + 0.5f);
+				if (uiConfTmp > 100) uiConfTmp = 100;
+				wConfPack += uiConfTmp;
+			}
+			i_pstVisuCommData->dynaData_WO_Ex.aRsv_HignComm[9] = wConfPack;
+		}
+#endif
 
 
 

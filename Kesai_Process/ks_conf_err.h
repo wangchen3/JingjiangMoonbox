@@ -3,10 +3,12 @@
  *
  *  双置信度融合误差模块(8.4误差链路外挂,独立文件不改动calcerr.c)
  *  整体自老架构ARM(Slave_stm32_ARM,2026.11.12版)同名模块移植,算法逐行保留;
- *  本工程去运行期开关化:老架构的观察/接入双开关(xEnableConfErr/xSwitchWrEn,
- *  485屏46059 bit3/bit4下发)不迁移,改为编译期总开关KS_USE_CONF_ERR——宏=1时
- *  置信度直接接入误差链路(融合误差替换上报iVerror/iHerror,显示与误差计算不分家),
+ *  运行期开关:老架构的观察/接入双开关(xEnableConfErr/xSwitchWrEn)已随月影Pro组态
+ *  屏通讯一起移植回(人机data_RW.awRsv_RdWr[0] bit14/bit15下发,解析见modbus485.c),
+ *  默认0/0=上电完全原行为(同老架构),人机打开才计算/接入;
+ *  编译期总开关KS_USE_CONF_ERR仍为编译闸门,
  *  宏=0时本模块完全不参与编译,回退原行为|Yang.zj+置信度迁移8.4 2026.11.13.112036
+ *  |开关移植回+置信度/飞点485显示 2026.11.13
  *  本模块只负责置信度计算与误差融合,不涉及飞点剔除(飞点开关KS_USE_NEW_FLY_REMOVE
  *  归ks_fly_remove.h自持,与本模块无关)
  *  置信度公式移植自仿真平台qtversion置信度加权链(algorithm/kesai_calcArcErr_Firey/
@@ -32,20 +34,29 @@
 #include "base.h"
 #include "calcerr.h"
 
-/* 置信度融合误差总开关(编译期,本工程不设运行期开关/观察态)
- * 1 = 置信度融合误差直接接入误差链路:每圈KS_CalcError_ARC之后计算置信度,
- *     上报iVerror/iHerror替换为融合误差KS_ConfErr_GetV/H(主站上报/报警判断/
- *     人机显示平均同步吃到融合值,不分家)
+/* 置信度融合误差总开关(编译期闸门;接入与否的运行期选择见下方xEnableConfErr/xSwitchWrEn)
+ * 1 = 模块参与编译:每圈KS_CalcError_ARC之后计算置信度,融合误差是否替换上报
+ *     iVerror/iHerror由运行期双开关决定(默认双开=融合接入,与原移植版行为一致)
  * 0 = 完全回退原行为(本模块不参与编译),恢复本宏重新编译即可
- * 设计与挂接|Yang.zj+置信度迁移8.4 2026.11.13.112036 */
+ * 设计与挂接|Yang.zj+置信度迁移8.4 2026.11.13.112036|运行期开关移植回 2026.11.13 */
 #define KS_USE_CONF_ERR		1
 
-/* 参数输入变量(无485下发,调试器可改,写入后下一圈生效) */
+/* 运行时双开关(自老架构ARM同名模块移植回,老架构485屏46059.03/.04下发;
+ * 本工程对应人机data_RW.awRsv_RdWr[0] bit14/bit15,解析见modbus485.c):
+ * 默认0/0=上电完全原行为(同老架构),485建立后人机开关为准
+ * |wang.c+双置信度融合 2026.11.9.165510|开关语义解耦 2026.11.12|移植回8.4+月影Pro|默认全关 2026.11.13 */
+extern BYTE xEnableConfErr;		/* 置信度观察开关|=1计算置信度并送人机显示(dynaData_WO_Ex),
+								 * 误差链按xSwitchWrEn决定|=0完全原行为(默认,显示值送0) */
+extern BYTE xSwitchWrEn;		/* 置信度接入误差链开关|仅在xEnableConfErr=1时有效:
+								 * 再=1融合误差替换上报iVerror/iHerror|=0只显示不接入(默认) */
+
+/* 参数输入变量(485下发:人机data_RW.awRsv_RdWr[1]=wConfS50×0.001mm,bit14=1且
+ * 范围1~1000才写入,越界保持原值,见modbus485.c;调试器同样可改,写入后下一圈生效) */
 extern REAL rConfS50Mm;			/* CK一致度尺度s50输入@mm|默认0.08,s=s50时C=50%
 								 *|wang.c+双置信度融合 2026.11.9.165510 */
 
-/* 每圈置信度记录变量(0~100,有效圈刷新,丢失圈保持上次值便于观测;仅供调试器观察,
- * 不做485显示挂点——本工程显示与误差链路不分家|Yang.zj+置信度迁移8.4 2026.11.13.112036) */
+/* 每圈置信度记录变量(0~100,有效圈刷新,丢失圈保持上次值便于观测;485显示挂点
+ * dynaData_WO_Ex.aRsv_HignComm[9]=wConfPack高低字节打包,见modbus485.c的KS_SetData_485) */
 extern REAL rConfLastRevV;		/* 纵向本圈融合置信度F×100|wang.c+双置信度融合 2026.11.9.165510 */
 extern REAL rConfLastRevH;		/* 横向本圈融合置信度F×100|wang.c+双置信度融合 2026.11.9.165510 */
 

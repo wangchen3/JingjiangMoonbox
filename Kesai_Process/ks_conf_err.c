@@ -63,8 +63,11 @@
 #define KS_CONF_GETBIT16(w,b)	((BYTE)(((WORD)(w)>>(b))&0x0001))
 
 /* ---------------- 全局参数/记录变量(定义,声明见ks_conf_err.h) ---------------- */
-/* 老架构运行期双开关xEnableConfErr/xSwitchWrEn不迁移(去开关化,编译期宏KS_USE_CONF_ERR整体控制)
- * |Yang.zj+置信度迁移8.4 2026.11.13.112036 */
+/* 运行时双开关自老架构移植回(默认0/0=上电完全原行为,同老架构;485建立后人机
+ * data_RW.awRsv_RdWr[0] bit14/bit15为准,解析见modbus485.c)
+ * |移植回8.4+月影Pro 485开关下发 2026.11.13|默认全关 2026.11.13 */
+BYTE xEnableConfErr = 0;	 /* 置信度观察开关|=1计算并送人机显示|=0完全原行为(默认) */
+BYTE xSwitchWrEn = 0;		 /* 置信度接入开关|仅观察开关=1时有效:再=1融合误差才替换上报(默认) */
 REAL rConfS50Mm = 0.08f;	 /* s50默认0.08mm|wang.c+双置信度融合 2026.11.9.165510 */
 REAL rConfLastRevV = 0.0f;	/* 纵向每圈融合置信度记录0~100 */
 REAL rConfLastRevH = 0.0f;	/* 横向每圈融合置信度记录0~100 */

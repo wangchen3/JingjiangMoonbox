@@ -25,6 +25,16 @@
  * 宏开关与回退设计|Yang.zj+用于新飞点检测 2026.10.24.103254 */
 #define KS_USE_NEW_FLY_REMOVE	1
 
+/* 运行时飞点开关(本模块自持,与置信度模块无关;自老架构ARM同名模块移植回,
+ * 老架构485屏46059.02下发,本工程对应人机data_RW.awRsv_RdWr[0] bit13,见modbus485.c):
+ * 1=新Theil-Sen剔除
+ * 0=运行时回退旧二阶差分KS_FB_PickOutFakePoint(默认,上电原行为)——Feed_V/H入口
+ * 旁路原值直通判GOOD,calcerr.c内Feed调用点不用改,KS_FB_ProSample按同一开关
+ * 运行时切换新旧判定路径
+ * 开关任意沿翻转由Feed_V/H内部检测并全复位该实例(0→1重新暖机,1→0清状态防残留)
+ * |wang.c+双置信度融合 2026.11.9.171753|移植回8.4+月影Pro 485开关下发|默认关 2026.11.13 */
+extern uint8_t xEnableNewFlyRemove;
+
 /* 逐帧判定码(对应 飞点剔除.py 的判定字符串,供上位观测/标志位使用) */
 #define KS_FLY_JUDGE_FIRST	0	/* 首帧(启动期无条件采信) */
 #define KS_FLY_JUDGE_GOOD	1	/* 好(原值输出,进可信历史) */

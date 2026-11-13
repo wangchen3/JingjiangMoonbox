@@ -679,6 +679,12 @@ static void ks_fly_reset(KsFlyRemover *pst)
 
 /* ---------------- 对外接口:纵向/横向两个独立实例 ---------------- */
 
+/* 运行时飞点开关定义(声明见ks_fly_remove.h,与置信度模块无关):
+ * 默认0=回退旧二阶差分(上电原行为,人机上打开才启用新Theil-Sen剔除);
+ * 此值为485通讯建立前的默认(人机data_RW.awRsv_RdWr[0] bit13下发,见modbus485.c)
+ * |wang.c+双置信度融合 2026.11.9.171753|移植回8.4+月影Pro 485开关下发|默认关 2026.11.13 */
+uint8_t xEnableNewFlyRemove = 0;
+
 void KS_FlyRemove_Reset_V(void)
 {
 	ks_fly_reset(&s_stFlyV);
@@ -691,11 +697,41 @@ void KS_FlyRemove_Reset_H(void)
 
 float KS_FlyRemove_Feed_V(float i_fErr, uint8_t *o_byJudge)
 {
+	static uint8_t xFlyPre = 0xFF;/* 上次开关值(翻转检测,本实例独立) */
+	/* 开关任意沿翻转:本实例全复位(0→1重新暖机;1→0清状态防残留)
+	 * |wang.c+双置信度融合 2026.11.9.171753 */
+	if (xFlyPre != 0xFF && xFlyPre != xEnableNewFlyRemove)
+	{
+		ks_fly_reset(&s_stFlyV);
+	}
+	xFlyPre = xEnableNewFlyRemove;
+	/* 开关旁路:=0时原值直通判GOOD,calcerr.c内Feed调用点不用改;
+	 * KS_FB_ProSample按同一开关运行时切回旧二阶差分路径
+	 * |wang.c+双置信度融合 2026.11.9.171753 */
+	if (xEnableNewFlyRemove == 0)
+	{
+		if (o_byJudge != 0) *o_byJudge = KS_FLY_JUDGE_GOOD;
+		return i_fErr;
+	}
 	return ks_fly_feed(&s_stFlyV, i_fErr, o_byJudge);
 }
 
 float KS_FlyRemove_Feed_H(float i_fErr, uint8_t *o_byJudge)
 {
+	static uint8_t xFlyPre = 0xFF;/* 上次开关值(翻转检测,本实例独立) */
+	/* 开关任意沿翻转:本实例全复位(0→1重新暖机;1→0清状态防残留)
+	 * |wang.c+双置信度融合 2026.11.9.171753 */
+	if (xFlyPre != 0xFF && xFlyPre != xEnableNewFlyRemove)
+	{
+		ks_fly_reset(&s_stFlyH);
+	}
+	xFlyPre = xEnableNewFlyRemove;
+	/* 开关旁路:同纵向|wang.c+双置信度融合 2026.11.9.171753 */
+	if (xEnableNewFlyRemove == 0)
+	{
+		if (o_byJudge != 0) *o_byJudge = KS_FLY_JUDGE_GOOD;
+		return i_fErr;
+	}
 	return ks_fly_feed(&s_stFlyH, i_fErr, o_byJudge);
 }
 

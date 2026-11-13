@@ -54,10 +54,10 @@ void KS_FB_ProSample(StPara_PduBroadcastUp* i_pstStPara_PduBroadcastUp,	//上行
 	//5#命令
     //StCMD_05* pstStCMD_05;
 	//有效误差判断也分开2023.5.24.102943(仅旧飞点算法使用|Yang.zj+用于新飞点检测 2026.10.24.103254)
-#if !KS_USE_NEW_FLY_REMOVE
+	//运行时飞点开关(xEnableNewFlyRemove=0回退旧算法)需要旧路径常驻编译,声明不再屏蔽
+	//|移植回8.4+月影Pro 2026.11.13
 	BYTE xErrorIsValid_V = 0;//有效误差
 	BYTE xErrorIsValid_H = 0;//有效误差
-#endif
 	//飞点标志也分开2023.5.24.103248
 	BYTE xFakePoint_V = 0;//误差剔除飞点
 	BYTE xFakePoint_H = 0;//误差剔除飞点
@@ -456,9 +456,10 @@ void KS_FB_ProSample(StPara_PduBroadcastUp* i_pstStPara_PduBroadcastUp,	//上行
 //		if((stStCalcParam_Out.o_iRtn_V!=0 && i_pstStAxisParam->xFlag_CalcErr_New==0) ||
 //					(stStCalcParam_Use_New.o_iRtn_V!=0 && i_pstStAxisParam->xFlag_CalcErr_New==1))
 		//2026.4.21.153727 屏蔽
-		//误差有效标志只被下方旧飞点判断使用,新算法路径下不参与(丢失语义由o_iRtn_V分支处理)|
+		//误差有效标志只被旧飞点判断使用(丢失语义由o_iRtn_V分支处理)|
 		//Yang.zj+用于新飞点检测 2026.10.24.103254
-#if !KS_USE_NEW_FLY_REMOVE
+		//运行时飞点开关(xEnableNewFlyRemove)需要旧路径常驻,赋值不再按宏屏蔽
+		//|移植回8.4+月影Pro 485开关下发 2026.11.13
 		if(stStCalcParam_Out.o_iRtn_V!=0)
 		//返回值为0代表误差有效
 		{
@@ -468,7 +469,6 @@ void KS_FB_ProSample(StPara_PduBroadcastUp* i_pstStPara_PduBroadcastUp,	//上行
 		{
 			xErrorIsValid_V=1;
 		}
-#endif
 		//剔除飞点初始化
 		xFakePoint_V=0;
 		//通讯获取飞点阈值@2024.7.31.172440(参数合法性钳位,新旧算法共用)
@@ -481,16 +481,25 @@ void KS_FB_ProSample(StPara_PduBroadcastUp* i_pstStPara_PduBroadcastUp,	//上行
 			i_pstStAxisParam->byFakeThreshold_V = 50;
 		}
 #if KS_USE_NEW_FLY_REMOVE
+		//运行时飞点开关(xEnableNewFlyRemove,ks_fly_remove.h):1=新判定取码|0=回退旧二阶差分
+		//两路径都常驻编译,开关只做运行时选择(开关翻转时剔除器复位见ks_fly_remove.c);
+		//宏KS_USE_NEW_FLY_REMOVE=0时仍只编译旧路径,原编译期回退语义保留
+		//|wang.c+双置信度融合 2026.11.9.165510|移植回8.4+月影Pro 485开关下发 2026.11.13
+		if(xEnableNewFlyRemove)
+		{
 		//新飞点判定:剔除已在calcerr.c内N幅平均之前对原始误差完成
 		//(飞点值被替换值替换:成熟账本≥3点且非振荡时为趋势外推P并刷锁存,否则锁存),
 		//这里只取逐帧判定码置byStsV bit2;飞点/暂缓都算"本帧误差被替换上报"|
-		//Yang.zj+用于新飞点检测 2026.10.24.103254|Yang.zj+ 2026.10.27.140301
-		if(stStCalcParam_Out.o_byFlyFlag_V==KS_FLY_JUDGE_FAKE
-			|| stStCalcParam_Out.o_byFlyFlag_V==KS_FLY_JUDGE_HOLD)
-		{
-			xFakePoint_V = 1;
+		//Yang.zj+用于新飞点检测 2026.10.24.103354|Yang.zj+ 2026.10.27.140301
+			if(stStCalcParam_Out.o_byFlyFlag_V==KS_FLY_JUDGE_FAKE
+				|| stStCalcParam_Out.o_byFlyFlag_V==KS_FLY_JUDGE_HOLD)
+			{
+				xFakePoint_V = 1;
+			}
 		}
-#else
+		else
+#endif
+		{
 		stStPickOutFakePointIn.i_xIsValidError=xErrorIsValid_V;
 		//2026.4.21.153752屏蔽
 //		if(i_pstStAxisParam->xFlag_CalcErr_New)
@@ -507,14 +516,14 @@ void KS_FB_ProSample(StPara_PduBroadcastUp* i_pstStPara_PduBroadcastUp,	//上行
 		stStPickOutFakePointIn.i_iErrorLevel_0_01mm=25;
 		stStPickOutFakePointIn.i_iVariationVariationMin=5;
 		stStPickOutFakePointIn.i_iVariationVariationMax=50;//15;最大值修改到50@2024.7.31.172730
-		KS_FB_PickOutFakePoint_V(stStPickOutFakePointIn,&xFakePoint_V);//误差剔除飞点
-#endif
+			KS_FB_PickOutFakePoint_V(stStPickOutFakePointIn,&xFakePoint_V);//误差剔除飞点
+		}
 		//增加横向飞点判断
 		//2026.4.21.153827 屏蔽
 //		if((stStCalcParam_Out.o_iRtn_H!=0 && i_pstStAxisParam->xFlag_CalcErr_New==0) ||
 //					(stStCalcParam_Use_New.o_iRtn_H!=0 && i_pstStAxisParam->xFlag_CalcErr_New==1))
 		//误差有效标志只被旧飞点判断使用|Yang.zj+用于新飞点检测 2026.10.24.103254
-#if !KS_USE_NEW_FLY_REMOVE
+		//运行时飞点开关需要旧路径常驻,赋值不再按宏屏蔽|移植回8.4+月影Pro 2026.11.13
 		if(stStCalcParam_Out.o_iRtn_H!=0)
 		{
 			xErrorIsValid_H=0;
@@ -523,7 +532,6 @@ void KS_FB_ProSample(StPara_PduBroadcastUp* i_pstStPara_PduBroadcastUp,	//上行
 		{
 			xErrorIsValid_H=1;
 		}
-#endif
 		//剔除飞点初始化
 		xFakePoint_H=0;
 		//通讯获取飞点阈值@2024.7.31.172440(参数合法性钳位,新旧算法共用)
@@ -536,13 +544,19 @@ void KS_FB_ProSample(StPara_PduBroadcastUp* i_pstStPara_PduBroadcastUp,	//上行
 			i_pstStAxisParam->byFakeThreshold_H = 50;
 		}
 #if KS_USE_NEW_FLY_REMOVE
-		//新飞点判定:横向,同纵向|Yang.zj+用于新飞点检测 2026.10.24.103254
-		if(stStCalcParam_Out.o_byFlyFlag_H==KS_FLY_JUDGE_FAKE
-			|| stStCalcParam_Out.o_byFlyFlag_H==KS_FLY_JUDGE_HOLD)
+		//运行时飞点开关:横向,同纵向|wang.c+双置信度融合 2026.11.9.165510|移植回8.4 2026.11.13
+		if(xEnableNewFlyRemove)
 		{
-			xFakePoint_H = 1;
+		//新飞点判定:横向,同纵向|Yang.zj+用于新飞点检测 2026.10.24.103254
+			if(stStCalcParam_Out.o_byFlyFlag_H==KS_FLY_JUDGE_FAKE
+				|| stStCalcParam_Out.o_byFlyFlag_H==KS_FLY_JUDGE_HOLD)
+			{
+				xFakePoint_H = 1;
+			}
 		}
-#else
+		else
+#endif
+		{
 		stStPickOutFakePointIn.i_xIsValidError=xErrorIsValid_H;
 		//2026.4.21.153843 屏蔽
 //		if(i_pstStAxisParam->xFlag_CalcErr_New)
@@ -552,7 +566,7 @@ void KS_FB_ProSample(StPara_PduBroadcastUp* i_pstStPara_PduBroadcastUp,	//上行
 //		else
 //		{
 			stStPickOutFakePointIn.i_iError_0_01mm=stStCalcParam_Out.o_iHResult;
-		//}
+//}
 		//stStPickOutFakePointIn.i_iVariationBaseValue=5;
 		stStPickOutFakePointIn.i_iVariationBaseValue=(INT)i_pstStAxisParam->byFakeThreshold_H;
 		stStPickOutFakePointIn.i_iBoundaryError_0_01mm=20;
@@ -560,7 +574,7 @@ void KS_FB_ProSample(StPara_PduBroadcastUp* i_pstStPara_PduBroadcastUp,	//上行
 		stStPickOutFakePointIn.i_iVariationVariationMin=5;
 		stStPickOutFakePointIn.i_iVariationVariationMax=50;//15;最大值修改到50@2024.7.31.172730
 		KS_FB_PickOutFakePoint_H(stStPickOutFakePointIn,&xFakePoint_H);//误差剔除飞点
-#endif
+		}
 
 		//		(*byStsV/H位定义:
 		//		* bit0: 报警|
@@ -602,9 +616,18 @@ void KS_FB_ProSample(StPara_PduBroadcastUp* i_pstStPara_PduBroadcastUp,	//上行
 			//			else
 //			{
 #if KS_USE_CONF_ERR
-				//置信度融合误差接入(编译期宏):替换当圈上报值,下游报警判断/人机显示平均
-				//自动跟随融合值|Yang.zj+置信度迁移8.4 2026.11.13.112036
-				i_pstStPara_PduBroadcastUp->iVerror= KS_ConfErr_GetV();
+				//置信度误差接入(运行期双开关xEnableConfErr+xSwitchWrEn,ks_conf_err.h,人机
+				//data_RW.awRsv_RdWr[0] bit14/bit15下发):双开才上报融合值,否则原每圈值;
+				//编译期宏KS_USE_CONF_ERR=0时完全回退原行为
+				//|wang.c+双置信度融合 2026.11.9.165510|移植回8.4+月影Pro 485开关下发 2026.11.13
+				if(xEnableConfErr && xSwitchWrEn)
+				{
+					i_pstStPara_PduBroadcastUp->iVerror= KS_ConfErr_GetV();
+				}
+				else
+				{
+					i_pstStPara_PduBroadcastUp->iVerror= stStCalcParam_Out.o_iVResult;
+				}
 #else
 				i_pstStPara_PduBroadcastUp->iVerror= stStCalcParam_Out.o_iVResult;
 #endif
@@ -638,8 +661,15 @@ void KS_FB_ProSample(StPara_PduBroadcastUp* i_pstStPara_PduBroadcastUp,	//上行
 			//			else
 //			{
 #if KS_USE_CONF_ERR
-				//置信度融合误差接入:横向,同纵向(编译期宏)|Yang.zj+置信度迁移8.4 2026.11.13.112036
-				i_pstStPara_PduBroadcastUp->iHerror= KS_ConfErr_GetH();
+				//置信度误差接入:横向,同纵向(运行期双开关)|移植回8.4+月影Pro 2026.11.13
+				if(xEnableConfErr && xSwitchWrEn)
+				{
+					i_pstStPara_PduBroadcastUp->iHerror= KS_ConfErr_GetH();
+				}
+				else
+				{
+					i_pstStPara_PduBroadcastUp->iHerror= stStCalcParam_Out.o_iHResult;
+				}
 #else
 				i_pstStPara_PduBroadcastUp->iHerror= stStCalcParam_Out.o_iHResult;
 #endif
