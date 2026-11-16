@@ -1,5 +1,5 @@
 #define DWVERSION 2126111315
-//2126111315|| 人机485运行期开关接入（自老架构移植回）：data_RW.wConfSwitch bit13飞点/bit14置信度观察/bit15接入（读写43177，默认全关=上电原行为）、wConfS50参数下发（读写43178，0.001mm，1~1000）、置信度显示dynaData_WO_Ex.wConfPack（只写131，高8纵向F/低8横向F）；新旧飞点路径常驻编译运行期选择，开关沿翻转自动复位剔除器。通道明细见README/置信度飞点_人机485通道说明.md，整体移植总结见README/飞点剔除与双置信度_移植总结.md|Yang.zj+移植总结文档 2026.11.13
+//2126111315|| 人机485运行期开关接入（自老架构移植回）：data_RW.wConfSwitch bit13飞点/bit14置信度观察/bit15接入（读写43177，默认全关=上电原行为）、wConfS50参数下发（读写43178，0.001mm，1~1000）、置信度显示data_RW.wConfPack（读写3179，高8纵向F/低8横向F；2026.11.16提交0e80898由只写131挪入，dynaData_WO_Ex还原全预留）；新旧飞点路径常驻编译运行期选择，开关沿翻转自动复位剔除器。通道明细见README/置信度飞点_人机485通道说明.md，整体移植总结见README/飞点剔除与双置信度_移植总结.md|Yang.zj+移植总结文档 2026.11.13|通道地址随0e80898更新 2026.11.16
 
 #define DWVERSION 2126111312
 //2126111312|| markDetection(全自动套印色标检测)封编译期宏USE_MARK_DETECTION：暂未投用默认0——markDetection.c整体#if包裹不编译(零RAM/Flash，代码完整保留未删除)，main.c的include与KsAutoFindSignal调用点一并剔除；启用改宏为1重编译即可|Yang.zj+markDetection封编译宏 2026.11.13.120400
