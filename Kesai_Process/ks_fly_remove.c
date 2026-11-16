@@ -108,7 +108,7 @@ typedef struct{
 	uint16_t	uwJudgedCnt;
 	float		afAllDev[16];					/* 近16帧|新值-带中心|(含被拒帧,振荡模式估幅用) */
 	uint16_t	uwAllDevCnt;
-	uint8_t		xOscOn;							/* 振荡模式开关(生效时门放宽到全幅MAD) */
+	uint8_t		xOscOn;							/* 振荡模式开关(生效	时门放宽到全幅MAD) */
 	uint32_t	uiIdxNext;						/* 下一帧帧号(内部稠密递增,丢失帧不占号) */
 	float		afQdq[16];						/* 近16个非零相邻差分,数据分辨率估计用|Yang.zj+ 2026.10.27.175616 */
 	uint16_t	uwQdqCnt;						/* 分辨率差分窗内个数 */
