@@ -55,10 +55,26 @@ extern BYTE xSwitchWrEn;		/* 置信度接入误差链开关|仅在xEnableConfErr
 extern REAL rConfS50Mm;			/* CK一致度尺度s50输入@mm|默认0.08,s=s50时C=50%
 								 *|wang.c+双置信度融合 2026.11.9.165510 */
 
+/* Qn容差τ输入变量(与s50同构的485下发:人机data_RW.wConfTau@读写3180,单位丝,
+ * bit14=1且范围1~100才写入,越界/非正值保持原值,见modbus485.c,写入后下一圈生效;
+ * 原编译期常量KS_CONF_TAU_SILK=5转为默认值,计算处改用本变量)
+ * |Yang.zj+τ变量化(原固定5丝) 2026.11.17.155754 */
+extern REAL rConfTauSilk;		/* Qn容差τ@丝|Qn=100·erf(τ/(√2·jp)),τ越大对交点
+								 * 抖动越宽容(Qn越易得高分) */
+
 /* 每圈置信度记录变量(0~100,有效圈刷新,丢失圈保持上次值便于观测;485显示挂点
  * data_RW.wConfPack@MCGS读写3179高低字节打包,见modbus485.c的KS_SetData_485) */
 extern REAL rConfLastRevV;		/* 纵向本圈融合置信度F×100|wang.c+双置信度融合 2026.11.9.165510 */
 extern REAL rConfLastRevH;		/* 横向本圈融合置信度F×100|wang.c+双置信度融合 2026.11.9.165510 */
+
+/* CK/Qn子分数每圈记录(0~100,有效圈刷新,丢失圈保持上次值;流无效当圈为0):
+ * 485观测上报 data_RW.wConfCk/wConfQn@MCGS读写3181/3182,高8位=纵向|低8位=横向,
+ * 0~100取整钳位打包见modbus485.c的KS_SetData_485(与wConfPack同款),bit14=0时送0
+ * |Yang.zj+CK/Qn观测上报 2026.11.17.162027 */
+extern REAL rConfCkLastV;		/* 纵向本圈CK置信度C×100 */
+extern REAL rConfQnLastV;		/* 纵向本圈Qn置信度(0~100) */
+extern REAL rConfCkLastH;		/* 横向本圈CK置信度C×100 */
+extern REAL rConfQnLastH;		/* 横向本圈Qn置信度 */
 
 /* 全状态复位:CK流历史+混合递推状态+记录变量清零(工况变化检测在Process内自持,
  * 外部无需调用,公开备用) */

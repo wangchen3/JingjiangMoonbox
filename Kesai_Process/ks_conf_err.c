@@ -41,7 +41,9 @@
 /* ---------------- 常量(与仿真平台opt链一致) ---------------- */
 #define KS_CONF_STREAM_NUM		4	/* 流=(波门组0/1)×(通道T1/T2)|单波门只算g0 |wang.c+双置信度融合 2026.11.9.165510 */
 #define KS_CONF_IDX(g,c)		((g)*2+(c))
-#define KS_CONF_TAU_SILK		5.0f	/* Qn容差τ@丝|固定值,需要可调时再开变量(仿真平台optTauSilk默认5) */
+#define KS_CONF_TAU_SILK		5.0f	/* Qn容差τ默认值@丝(仿真平台optTauSilk默认5)|已变量化为
+									 * rConfTauSilk(485下发wConfTau,见ks_conf_err.h),本宏仅作默认
+									 * |Yang.zj+τ变量化 2026.11.17.155754 */
 #define KS_CONF_MAD_C			1.4826f	/* MAD→正态标准差系数 */
 #define KS_CONF_SQRT2			1.41421356f
 #define KS_CONF_QN_MIN_PT_LOOSE	16	/* 噪声窗最少点数(保底模式:每侧残块≥8)|2026.11.12
@@ -69,8 +71,16 @@
 BYTE xEnableConfErr = 0;	 /* 置信度观察开关|=1计算并送人机显示|=0完全原行为(默认) */
 BYTE xSwitchWrEn = 0;		 /* 置信度接入开关|仅观察开关=1时有效:再=1融合误差才替换上报(默认) */
 REAL rConfS50Mm = 0.08f;	 /* s50默认0.08mm|wang.c+双置信度融合 2026.11.9.165510 */
+REAL rConfTauSilk = KS_CONF_TAU_SILK;/* Qn容差τ@丝|默认5,485下发wConfTau(读写3180,单位丝,1~100,
+									  * bit14=1才写入)|Yang.zj+τ变量化 2026.11.17.155754 */
 REAL rConfLastRevV = 0.0f;	/* 纵向每圈融合置信度记录0~100 */
 REAL rConfLastRevH = 0.0f;	/* 横向每圈融合置信度记录0~100 */
+/* CK/Qn子分数每圈记录(0~100,有效圈刷新,丢失圈保持上次值;供485观测上报
+ * wConfCk/wConfQn@读写3181/3182,modbus485.c打包成整数字节)|Yang.zj+CK/Qn观测上报 2026.11.17.162027 */
+REAL rConfCkLastV = 0.0f;	/* 纵向本圈CK置信度C×100(短板流,流无效时为0) */
+REAL rConfQnLastV = 0.0f;	/* 纵向本圈Qn置信度(0~100,流无效时为0) */
+REAL rConfCkLastH = 0.0f;	/* 横向本圈CK置信度C×100 */
+REAL rConfQnLastH = 0.0f;	/* 横向本圈Qn置信度 */
 
 /* ---------------- 模块内部状态 ---------------- */
 /* CK流状态:上一圈三档交点+本圈位移标准差s(点,<0=本圈无效)|对应opt的s_optPrevX/s_optCurS
@@ -310,7 +320,9 @@ static void ks_conf_calc_qn(const StSignalParsingGroupDetail* d, INT c, INT idx,
 	si = rPrecMm * 100.0f;/* 丝/点 */
 	jp = 2.0f * sigma * si / mMin;
 	if (jp <= 0.0f) return;
-	arg = KS_CONF_TAU_SILK / (KS_CONF_SQRT2 * jp);
+	/* τ改用变量rConfTauSilk(485可调);非正值防御回退默认5丝(485写入有1~100钳位,
+	 * 此处兜底调试器误写)|Yang.zj+τ变量化 2026.11.17.155754 */
+	arg = (rConfTauSilk > 0.0f ? rConfTauSilk : KS_CONF_TAU_SILK) / (KS_CONF_SQRT2 * jp);
 	if (arg > 3.0f) { s_afCurQn[idx] = 100.0f; return; }
 	s_afCurQn[idx] = 100.0f * erff(arg);
 }
@@ -421,6 +433,8 @@ void KS_ConfErr_Reset(void)
 	s_iOutV = 0; s_iOutH = 0;
 	rConfLastRevV = 0.0f;
 	rConfLastRevH = 0.0f;
+	rConfCkLastV = 0.0f; rConfQnLastV = 0.0f;/* CK/Qn记录一并清零|Yang.zj+CK/Qn观测上报 2026.11.17.162027 */
+	rConfCkLastH = 0.0f; rConfQnLastH = 0.0f;
 }
 
 void KS_ConfErr_Process(StAxisParam* i_pstStAxisParam,
@@ -500,6 +514,9 @@ void KS_ConfErr_Process(StAxisParam* i_pstStAxisParam,
 	{
 		s_iOutV = ks_conf_blend(i_pstOut->o_iVResult, &s_iPrevOutV, &s_xHasPrevOutV, rFV);
 		rConfLastRevV = rFV * 100.0f;/* 有效圈刷新记录变量 */
+		rConfCkLastV = rCV * 100.0f;/* CK/Qn子分数同步记录(C∈[0,1]×100,Qn_conf返回0~1归一×100还原)
+									 *|Yang.zj+CK/Qn观测上报 2026.11.17.162027 */
+		rConfQnLastV = rQV * 100.0f;
 	}
 
 	/* ⑤横向:同纵向(流选取按wStatusRef.9) */
@@ -515,6 +532,8 @@ void KS_ConfErr_Process(StAxisParam* i_pstStAxisParam,
 	{
 		s_iOutH = ks_conf_blend(i_pstOut->o_iHResult, &s_iPrevOutH, &s_xHasPrevOutH, rFH);
 		rConfLastRevH = rFH * 100.0f;
+		rConfCkLastH = rCH * 100.0f;/* 同纵向|Yang.zj+CK/Qn观测上报 2026.11.17.162027 */
+		rConfQnLastH = rQH * 100.0f;
 	}
 }
 

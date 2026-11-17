@@ -2818,11 +2818,19 @@ void KsUpdateDataRw(uint8_t xHmiToLocal,
 #if KS_USE_CONF_ERR
 			{
 				uint16_t wConfS50_RX = i_pstVisuCommData->data_RW.wConfS50;
+				uint16_t wConfTau_RX = i_pstVisuCommData->data_RW.wConfTau;
 				xEnableConfErr = KSGetDataBit(&i_pstVisuCommData->data_RW.wConfSwitch,14) ? 1 : 0;
 				xSwitchWrEn = KSGetDataBit(&i_pstVisuCommData->data_RW.wConfSwitch,15) ? 1 : 0;
 				if (xEnableConfErr && wConfS50_RX >= 1 && wConfS50_RX <= 1000)
 				{
 					rConfS50Mm = (REAL)wConfS50_RX / 1000.0f;//s50输入mm(s=s50时CK置信度C=50%)
+				}
+				/* Qn容差τ输入@丝(与s50同构):单位丝无换算,有效范围1~100,
+				 * bit14=1且范围内才写入,越界保持原值,下一圈生效
+				 * (Qn=100·erf(τ/(√2·jp)),原固定5丝)|Yang.zj+τ变量化 2026.11.17.155754 */
+				if (xEnableConfErr && wConfTau_RX >= 1 && wConfTau_RX <= 100)
+				{
+					rConfTauSilk = (REAL)wConfTau_RX;//τ输入丝(5=原固定默认)
 				}
 			}
 #endif
@@ -3057,10 +3065,15 @@ void KS_SetData_485(
 		//data_RW.wConfPack@人机MCGS读写通道3179:
 		//  高8位=纵向融合置信度F(0~100四舍五入钳位)|低8位=横向F(同上),
 		//  屏侧脚本自行拆字节:纵向F=wConfPack/256,横向F=wConfPack%256(同老架构);
+		//CK/Qn子分数显示同款打包@读写3181/3182(高8=纵向|低8=横向,0~100取整钳位):
+		//  wConfCk=CK置信度C×100,wConfQn=Qn置信度;流无效当圈分量为0,丢失圈保持上次值
 		//观察开关bit14=1才显示,bit14=0填0(完全原行为,同老架构)
 		//|wang.c+开关通讯接入 2026.11.10.160000|仅bit3=1显示 2026.11.12|移植8.4+月影Pro|挪入读写区 2026.11.16
+		//|CK/Qn观测上报 2026.11.17.162027
 		{
 			uint16_t wConfPackTmp = 0;
+			uint16_t wConfCkTmp = 0;
+			uint16_t wConfQnTmp = 0;
 			uint16_t uiConfTmp;
 			if (xEnableConfErr)
 			{
@@ -3070,8 +3083,23 @@ void KS_SetData_485(
 				uiConfTmp = (uint16_t)(rConfLastRevH + 0.5f);
 				if (uiConfTmp > 100) uiConfTmp = 100;
 				wConfPackTmp += uiConfTmp;
+				/* CK/Qn子分数:同款四舍五入+钳位+高低字节打包(纵向在高8位)|2026.11.17.162027 */
+				uiConfTmp = (uint16_t)(rConfCkLastV + 0.5f);
+				if (uiConfTmp > 100) uiConfTmp = 100;
+				wConfCkTmp = (uint16_t)(uiConfTmp << 8);
+				uiConfTmp = (uint16_t)(rConfCkLastH + 0.5f);
+				if (uiConfTmp > 100) uiConfTmp = 100;
+				wConfCkTmp += uiConfTmp;
+				uiConfTmp = (uint16_t)(rConfQnLastV + 0.5f);
+				if (uiConfTmp > 100) uiConfTmp = 100;
+				wConfQnTmp = (uint16_t)(uiConfTmp << 8);
+				uiConfTmp = (uint16_t)(rConfQnLastH + 0.5f);
+				if (uiConfTmp > 100) uiConfTmp = 100;
+				wConfQnTmp += uiConfTmp;
 			}
 			i_pstVisuCommData->data_RW.wConfPack = wConfPackTmp;
+			i_pstVisuCommData->data_RW.wConfCk = wConfCkTmp;
+			i_pstVisuCommData->data_RW.wConfQn = wConfQnTmp;
 		}
 #endif
 

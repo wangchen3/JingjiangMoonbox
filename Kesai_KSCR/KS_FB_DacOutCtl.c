@@ -647,7 +647,7 @@ void KS_AutoFocusCtl_MoonPro(uint8_t i_xEn,
 				i_pstStGrpParam->lrVelocity,//轴速度
 				i_pstStAxisParam->lrGirth,//版周长
 				i_puiCtlTime_OffsetAutoCtl,//偏移自调控制时间计数
-									128,//目标基线
+									64,//目标基线|原128(8bit中点)|Yang.zj+偏移自调目标基线128→64 2026.11.17.155754
 				i_pstStGlobalParam->fBaseLine_T1_OffsetCtl,//T1基线
 				i_pstStGlobalParam->fBaseLine_T2_OffsetCtl,//T2基线
 				&i_pstStGlobalParam->rOffset_T1,//T1偏移
