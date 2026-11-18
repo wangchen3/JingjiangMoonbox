@@ -17,7 +17,8 @@
  *    ③auiFSampData_Filtered即Qn噪声窗所用门内滤波波形(对应opt的auDataFilter)
  *    ④有效幅值alrSignalEffectiveScope对应opt的fSignalEffectiveScope
  *  与仿真平台的有意差异(信号源/口径不同,数值不逐位一致):
- *    E_k=o_iVResult/o_iHResult(老链N幅平均+修正量后的当圈上报值,而非opt的原始误差);
+ *    E_k=o_iVResult/o_iHResult(老链N幅平均+修正量后的当圈上报值,而非opt的原始误差;
+ *    修正量阶跃经③.5记忆平移瞬时穿透,等价于"IIR后再减修正量",防修正反应被滤波拖慢);
  *    混合在calcerr.c之外进行,calcerr.c零改动
  *  |wang.c+双置信度融合 2026.11.9.165510|解耦飞点开关 2026.11.9.171753
  *
@@ -494,6 +495,30 @@ void KS_ConfErr_Process(StAxisParam* i_pstStAxisParam,
 			idx = KS_CONF_IDX(g, c);
 			ks_conf_note_ck(&i_pstOut->astStSignalParsingGroupDetail[g], c, idx);
 			ks_conf_calc_qn(&i_pstOut->astStSignalParsingGroupDetail[g], c, idx, rPrecMm, dnPt);
+		}
+	}
+
+	/* ③.5 修正量前馈直通(记忆平移):E_k=o_iVResult为"N幅平均后已减i_iAdjustV"的口径,
+	 * 修正量阶跃会被IIR平滑成时间常数≈1/(1-F)圈的慢爬坡(客户实测:修正量修正后
+	 * 机器反应变慢)。目标行为等价于"先IIR滤波、最后再减修正量",由恒等式
+	 *   IIR(M)_k − A_k = F·(M_k−A_k) + (1−F)·(prev − ΔA)
+	 * 实现:每圈检测ΔA并同步平移混合记忆s_iPrevOutV/H——修正量变化当圈瞬时穿透
+	 * 输出,IIR只平滑物理测量;丢失圈期间的变化在恢复首圈同样生效;记忆无效(首圈)
+	 * 无需平移(直通初始化);修正量跟踪跨工况变化保持,不随排列/色序复位
+	 * (与混合递推同策略,防止复位引发假ΔA)|Yang.zj+修正量记忆平移(修正反应变慢修复) 2026.11.18.173201 */
+	{
+		static INT s_iAdjustPreV = 0, s_iAdjustPreH = 0;/* 上一圈修正量(跟踪器,勿复位) */
+		INT iDAdjV = (INT)i_pstIn->i_iAdjustV - s_iAdjustPreV;
+		INT iDAdjH = (INT)i_pstIn->i_iAdjustH - s_iAdjustPreH;
+		if (iDAdjV != 0)
+		{
+			if (s_xHasPrevOutV) s_iPrevOutV -= iDAdjV;/* 平移量=−ΔA(见上恒等式) */
+			s_iAdjustPreV = (INT)i_pstIn->i_iAdjustV;
+		}
+		if (iDAdjH != 0)
+		{
+			if (s_xHasPrevOutH) s_iPrevOutH -= iDAdjH;
+			s_iAdjustPreH = (INT)i_pstIn->i_iAdjustH;
 		}
 	}
 
