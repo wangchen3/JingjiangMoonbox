@@ -2563,7 +2563,7 @@ void KSModbusHmiComm()
 	/* 上电一次性把参数输入字的通讯镜像初始化为真实默认值:通讯建立时按区重发
 	 * (离线即置axReSendAllData,见下方)会把ARM镜像整区写入人机——镜像是BSS零值,
 	 * 不初始化会把屏上预设的初值刷成0(实测:屏τ预设5,上电显示0;算法侧因0不在
-	 * 1~100合法范围仍用默认5,纯显示不一致)。初始化后屏显默认80/5且与算法一致;
+	 * 1~100合法范围仍用默认5,纯显示不一致)。初始化后屏显默认80/τ默认(现12)且与算法一致;
 	 * 开关字wConfSwitch不初始化(保持0=上电原行为)。默认值取自模块变量(rConfS50Mm
 	 * ×1000=80, rConfTauSilk=5),改模块默认此处自动跟随|Yang.zj+上电参数镜像初始化 2026.11.17.200800 */
 	{
@@ -2572,7 +2572,7 @@ void KSModbusHmiComm()
 		{
 			s_xConfParamMirrorInit = 1;
 			g_stVisuCommData.data_RW.wConfS50 = (uint16_t)(rConfS50Mm * 1000.0f + 0.5f);/* 0.08mm→80 */
-			g_stVisuCommData.data_RW.wConfTau = (uint16_t)(rConfTauSilk + 0.5f);/* 5丝→5 */
+			g_stVisuCommData.data_RW.wConfTau = (uint16_t)(rConfTauSilk + 0.5f);/* τ默认→寄存器(现12,改宏自动跟随) */
 		}
 	}
 #endif

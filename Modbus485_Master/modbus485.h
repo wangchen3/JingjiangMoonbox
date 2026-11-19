@@ -426,7 +426,7 @@ typedef struct tagData_RW
 	uint16_t	wConfPack;	//置信度显示@MCGS读写3179:高8位=纵向融合置信度F(0~100取整钳位)
 						//|低8位=横向F,屏侧脚本自行拆字节(V=wConfPack/256,H=wConfPack%256);
 						//观察开关bit14关闭时送0(完全原行为,同老架构6207口径)
-	uint16_t	wConfTau;	//Qn容差τ输入@MCGS读写3180,单位丝(5=默认,即原固定值):Qn=100·erf(τ/(√2·jp)),
+	uint16_t	wConfTau;	//Qn容差τ输入@MCGS读写3180,单位丝(12=默认,2026.11.19由5改;原固定值5):Qn=100·erf(τ/(√2·jp)),
 						//有效范围1~100,越界ARM保持原值,bit14=1时才生效,下一圈生效
 						//|Yang.zj+τ变量化(原固定5丝) 2026.11.17.155754
 	uint16_t	wConfCk;	//CK置信度显示@MCGS读写3181(ARM写/人机读):高8位=纵向C×100|低8位=横向C,

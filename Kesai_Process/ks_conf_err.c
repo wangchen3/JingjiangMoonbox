@@ -42,9 +42,10 @@
 /* ---------------- 常量(与仿真平台opt链一致) ---------------- */
 #define KS_CONF_STREAM_NUM		4	/* 流=(波门组0/1)×(通道T1/T2)|单波门只算g0 |wang.c+双置信度融合 2026.11.9.165510 */
 #define KS_CONF_IDX(g,c)		((g)*2+(c))
-#define KS_CONF_TAU_SILK		5.0f	/* Qn容差τ默认值@丝(仿真平台optTauSilk默认5)|已变量化为
-									 * rConfTauSilk(485下发wConfTau,见ks_conf_err.h),本宏仅作默认
-									 * |Yang.zj+τ变量化 2026.11.17.155754 */
+#define KS_CONF_TAU_SILK		12.0f	/* Qn容差τ默认值@丝(原5=仿真平台optTauSilk默认,现场实测偏小
+									 * Qn压分过严,2026.11.19用户拍板12)|已变量化为rConfTauSilk
+									 * (485下发wConfTau,见ks_conf_err.h),本宏仅作默认
+									 * |Yang.zj+τ变量化 2026.11.17.155754|默认5→12 2026.11.19.114221 */
 #define KS_CONF_MAD_C			1.4826f	/* MAD→正态标准差系数 */
 #define KS_CONF_SQRT2			1.41421356f
 #define KS_CONF_QN_MIN_PT_LOOSE	16	/* 噪声窗最少点数(保底模式:每侧残块≥8)|2026.11.12
@@ -72,7 +73,7 @@
 BYTE xEnableConfErr = 0;	 /* 置信度观察开关|=1计算并送人机显示|=0完全原行为(默认) */
 BYTE xSwitchWrEn = 0;		 /* 置信度接入开关|仅观察开关=1时有效:再=1融合误差才替换上报(默认) */
 REAL rConfS50Mm = 0.08f;	 /* s50默认0.08mm|wang.c+双置信度融合 2026.11.9.165510 */
-REAL rConfTauSilk = KS_CONF_TAU_SILK;/* Qn容差τ@丝|默认5,485下发wConfTau(读写3180,单位丝,1~100,
+REAL rConfTauSilk = KS_CONF_TAU_SILK;/* Qn容差τ@丝|默认12(2026.11.19由5改,现场5偏小压分过严),485下发wConfTau(读写3180,单位丝,1~100,
 									  * bit14=1才写入)|Yang.zj+τ变量化 2026.11.17.155754 */
 REAL rConfLastRevV = 0.0f;	/* 纵向每圈融合置信度记录0~100 */
 REAL rConfLastRevH = 0.0f;	/* 横向每圈融合置信度记录0~100 */
@@ -170,7 +171,8 @@ static void ks_conf_note_ck(const StSignalParsingGroupDetail* d, INT c, INT idx)
 }
 
 /* ---------------- Qn:宽度测量随机精度分数(移植KSOptCalcQn数学部分) ----------------
- * 噪声窗=门内标记两侧空白区(25%前沿f25/25%后沿b25对称各外扩half_base=25%标宽;
+ * 噪声窗=门内标记两侧空白区(25%前沿f25/25%后沿b25对称各外扩half_base=0.5×25%标宽,
+ *       2026.11.19起半标宽,原整标宽致3×W25排除区窄门工况饿死噪声窗Qn显0);
  * 原+0.8mm脚部安全边K已取消,冗余|2026.11.12用户决策)
  * |Yang.zj+噪声窗对称 2026.11.10.110543(原右窗锚75%后沿b75,不对称);
  * 分块(2.77mm/精度)取中位数去局部基线,残差做MAD,剔除3.5×1.4826×MAD离群后
@@ -222,7 +224,7 @@ static void ks_conf_calc_qn(const StSignalParsingGroupDetail* d, INT c, INT idx,
 	markW = (INT)(b25 - f25);/* 25%处标宽(点) */
 	if (markW <= 0) return;
 	/* K(0.8mm脚部安全边)取消|2026.11.12用户决策: W25外扩本身已覆盖标记脚部,
-	 * 叠加K属冗余,窄门工况每侧白白损失0.8mm空白;排除区半宽=25%标宽 */
+	 * 叠加K属冗余,窄门工况每侧白白损失0.8mm空白;排除区半宽=0.5×25%标宽|2026.11.19半标宽 */
 	BL = (INT)(2.77f / rPrecMm + 0.5f);/* 2.77mm物理带宽换算为块长 */
 	if (BL < 16) BL = 16;
 	if (BL > KS_CONF_QN_BLK_MAX) BL = KS_CONF_QN_BLK_MAX;
@@ -231,12 +233,16 @@ static void ks_conf_calc_qn(const StSignalParsingGroupDetail* d, INT c, INT idx,
 	 * 两侧对称:均以25%沿为锚向外扩half_base(原右窗锚75%后沿b75,不对称)
 	 * |Yang.zj+噪声窗对称 2026.11.10.110543;
 	 * 边界只做越界钳位,不再"放不下整块则整窗置空"——放不下整块的侧由
-	 * 下方"每侧保底一块"补残块|2026.11.12用户决策 */
-	/* 边界取整与Python同口径:int(f25-W25浮点)整体取整,而非各自取整再相减|2026.11.12 */
+	 * 下方"每侧保底一块"补残块|2026.11.12用户决策;
+	 * 排除区半宽 W25→0.5×W25|2026.11.19:原排除区3×W25在窄门/宽标工况
+	 * (0x03实测W25=8.36mm@20mm门居中)把两侧空白全吃光→噪声窗饿死Qn无效
+	 * (显0,τ救不了空窗);半标宽后排除区=2×W25,标记脚部覆盖仍足够
+	 * (25%沿外已是空白主体),σ略抬升属可接受代价|Yang.zj+排除区半标宽(噪声窗饿死修复) 2026.11.19.112423 */
+	/* 边界取整与Python同口径:int(f25-0.5×W25浮点)整体取整,而非各自取整再相减|2026.11.12 */
 	lwS = 0;
-	lwE = (INT)(f25 - (b25 - f25));
+	lwE = (INT)(f25 - 0.5f * (b25 - f25));
 	if (lwE < lwS) lwE = lwS;
-	rwS = (INT)(b25 + (b25 - f25));
+	rwS = (INT)(b25 + 0.5f * (b25 - f25));
 	if (rwS < 0) rwS = 0;
 	rwE = dn;
 	if (rwS > rwE) rwS = rwE;
@@ -321,7 +327,7 @@ static void ks_conf_calc_qn(const StSignalParsingGroupDetail* d, INT c, INT idx,
 	si = rPrecMm * 100.0f;/* 丝/点 */
 	jp = 2.0f * sigma * si / mMin;
 	if (jp <= 0.0f) return;
-	/* τ改用变量rConfTauSilk(485可调);非正值防御回退默认5丝(485写入有1~100钳位,
+	/* τ改用变量rConfTauSilk(485可调);非正值防御回退默认宏值(485写入有1~100钳位,
 	 * 此处兜底调试器误写)|Yang.zj+τ变量化 2026.11.17.155754 */
 	arg = (rConfTauSilk > 0.0f ? rConfTauSilk : KS_CONF_TAU_SILK) / (KS_CONF_SQRT2 * jp);
 	if (arg > 3.0f) { s_afCurQn[idx] = 100.0f; return; }
