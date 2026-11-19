@@ -8,7 +8,13 @@
 static uint8_t  s_arBuf_Tmp[KS_RS_MORPH_MAX_POINTS];    /**< 临时复用缓冲 */
 static uint8_t  s_arBuf_Opened[KS_RS_MORPH_MAX_POINTS]; /**< 开运算结果：信号下包络线 */
 static uint8_t  s_arBuf_Closed[KS_RS_MORPH_MAX_POINTS];/**< 闭运算结果：信号上包络线 */
-static uint16_t s_awDeque[KS_RS_MORPH_MAX_POINTS];      /**< 单调队列索引缓存，用于滑动窗口加速 */
+/* 单调队列索引缓存，用于滑动窗口加速。
+ * 2026.11.19越界修复：队列用逻辑下标(单调递增,总压栈数=点数+窗口-1,满点800+大窗时
+ * 逻辑尾会越过数组尾,恒定/平台输入下尾弹出为零时实测写到s_awDeque[800]以后,静默
+ * 破坏.bss后续内存)——访问一律按容量取模复用物理槽位。安全性依据单调队列硬不变式:
+ * 活跃元素数≤窗口长(元素入栈满窗口步必被队头弹出),而CheckWindowValid保证窗口≤点数
+ * ≤数组容量,故取模后队头/队尾永不越过活跃区,无覆盖 |Yang.zj代+单调队列越界修复 2026.11.19 */
+static uint16_t s_awDeque[KS_RS_MORPH_MAX_POINTS];
 
 /**
  * @brief  获取镜像边界索引，处理信号边缘延拓
@@ -61,22 +67,23 @@ static void s_KsRsMorph_SlidingMin_U8(const uint8_t i_arSrc[], uint16_t i_wPoint
 
         // 维护递增队列，移除尾部大于当前值的元素
         while(wDequeHead < wDequeTail) {
-            uint16_t wTailIndex = s_awDeque[wDequeTail - 1u];
+            uint16_t wTailIndex = s_awDeque[(wDequeTail - 1u) % KS_RS_MORPH_MAX_POINTS];
             uint16_t wTailSrc = s_KsRsMorph_GetMirrorIndex(i_wPointNum, (int32_t)wTailIndex - (int32_t)wHalfWin);
             if(i_arSrc[wTailSrc] <= i_arSrc[wSrcIndex]) break;
             wDequeTail--;
         }
-        s_awDeque[wDequeTail++] = wExtIndex;
+        s_awDeque[wDequeTail % KS_RS_MORPH_MAX_POINTS] = wExtIndex;
+        wDequeTail++;
 
         // 移除超出窗口范围的队首元素
-        while(wDequeHead < wDequeTail && (wExtIndex - s_awDeque[wDequeHead]) >= i_wWindowLen) {
+        while(wDequeHead < wDequeTail && (wExtIndex - s_awDeque[wDequeHead % KS_RS_MORPH_MAX_POINTS]) >= i_wWindowLen) {
             wDequeHead++;
         }
 
         // 窗口形成后输出结果
         if(wExtIndex >= i_wWindowLen - 1u) {
             uint16_t wOutIndex = wExtIndex - (i_wWindowLen - 1u);
-            uint16_t wMinSrc = s_KsRsMorph_GetMirrorIndex(i_wPointNum, (int32_t)s_awDeque[wDequeHead] - (int32_t)wHalfWin);
+            uint16_t wMinSrc = s_KsRsMorph_GetMirrorIndex(i_wPointNum, (int32_t)s_awDeque[wDequeHead % KS_RS_MORPH_MAX_POINTS] - (int32_t)wHalfWin);
             o_arDst[wOutIndex] = i_arSrc[wMinSrc];
         }
     }
@@ -102,22 +109,23 @@ static void s_KsRsMorph_SlidingMax_U8(const uint8_t i_arSrc[], uint16_t i_wPoint
 
         // 维护递减队列，移除尾部小于当前值的元素
         while(wDequeHead < wDequeTail) {
-            uint16_t wTailIndex = s_awDeque[wDequeTail - 1u];
+            uint16_t wTailIndex = s_awDeque[(wDequeTail - 1u) % KS_RS_MORPH_MAX_POINTS];
             uint16_t wTailSrc = s_KsRsMorph_GetMirrorIndex(i_wPointNum, (int32_t)wTailIndex - (int32_t)wHalfWin);
             if(i_arSrc[wTailSrc] >= i_arSrc[wSrcIndex]) break;
             wDequeTail--;
         }
-        s_awDeque[wDequeTail++] = wExtIndex;
+        s_awDeque[wDequeTail % KS_RS_MORPH_MAX_POINTS] = wExtIndex;
+        wDequeTail++;
 
         // 移除超出窗口范围的队首元素
-        while(wDequeHead < wDequeTail && (wExtIndex - s_awDeque[wDequeHead]) >= i_wWindowLen) {
+        while(wDequeHead < wDequeTail && (wExtIndex - s_awDeque[wDequeHead % KS_RS_MORPH_MAX_POINTS]) >= i_wWindowLen) {
             wDequeHead++;
         }
 
         // 窗口形成后输出结果
         if(wExtIndex >= i_wWindowLen - 1u) {
             uint16_t wOutIndex = wExtIndex - (i_wWindowLen - 1u);
-            uint16_t wMaxSrc = s_KsRsMorph_GetMirrorIndex(i_wPointNum, (int32_t)s_awDeque[wDequeHead] - (int32_t)wHalfWin);
+            uint16_t wMaxSrc = s_KsRsMorph_GetMirrorIndex(i_wPointNum, (int32_t)s_awDeque[wDequeHead % KS_RS_MORPH_MAX_POINTS] - (int32_t)wHalfWin);
             o_arDst[wOutIndex] = i_arSrc[wMaxSrc];
         }
     }
