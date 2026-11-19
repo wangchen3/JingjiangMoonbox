@@ -2573,6 +2573,11 @@ void KSModbusHmiComm()
 			s_xConfParamMirrorInit = 1;
 			g_stVisuCommData.data_RW.wConfS50 = (uint16_t)(rConfS50Mm * 1000.0f + 0.5f);/* 0.08mm→80 */
 			g_stVisuCommData.data_RW.wConfTau = (uint16_t)(rConfTauSilk + 0.5f);/* τ默认→寄存器(现12,改宏自动跟随) */
+#if KS_CONF_AUTO_SW
+			g_stVisuCommData.data_RW.wConfSwitch |= (uint16_t)0x4000u;/* bit14=1置信度预估/显示
+																 * 常开(随整区重发推屏;人机仍可手动改0关显示)
+																 * |Yang.zj+开关自动governor 2026.11.19.133703 */
+#endif
 		}
 	}
 #endif
@@ -2830,7 +2835,9 @@ void KsUpdateDataRw(uint8_t xHmiToLocal,
 			//注意:开关为人机主权(同老架构),ARM默认全关(0/0/0)与上电整区写入人机的0一致,
 			//屏显与实际状态天然同步;人机侧开关初值设0即可
 			//|置信度/飞点485开关下发|默认全关 2026.11.13
-#if KS_USE_NEW_FLY_REMOVE
+/* 自动governor模式(KS_CONF_AUTO_SW=1)下bit13/bit15改由KsConfAutoSwTick按速度/收敛
+ * 自动控制(人机手动置1仍可强制开),此处不再按人机位直写|Yang.zj+ 2026.11.19.133703 */
+#if KS_USE_NEW_FLY_REMOVE && !KS_CONF_AUTO_SW
 			xEnableNewFlyRemove = KSGetDataBit(&i_pstVisuCommData->data_RW.wConfSwitch,13) ? 1 : 0;
 #endif
 #if KS_USE_CONF_ERR
@@ -2838,7 +2845,9 @@ void KsUpdateDataRw(uint8_t xHmiToLocal,
 				uint16_t wConfS50_RX = i_pstVisuCommData->data_RW.wConfS50;
 				uint16_t wConfTau_RX = i_pstVisuCommData->data_RW.wConfTau;
 				xEnableConfErr = KSGetDataBit(&i_pstVisuCommData->data_RW.wConfSwitch,14) ? 1 : 0;
+#if !KS_CONF_AUTO_SW
 				xSwitchWrEn = KSGetDataBit(&i_pstVisuCommData->data_RW.wConfSwitch,15) ? 1 : 0;
+#endif
 				if (xEnableConfErr && wConfS50_RX >= 1 && wConfS50_RX <= 1000)
 				{
 					rConfS50Mm = (REAL)wConfS50_RX / 1000.0f;//s50输入mm(s=s50时CK置信度C=50%)
@@ -2960,6 +2969,72 @@ void KsUpdateDataRw(uint8_t xHmiToLocal,
 		i_pstVisuCommData->data_RW.uiRemainNum_B		  		  		=  i_pstStGlobalParam->uiRemainNum_B;
 	}
 }
+
+#if KS_CONF_AUTO_SW
+/* ---------------- 开关自动governor(bit13飞点/bit15置信度接入,速度+收敛自动控制) ----------------
+ * 语义(详见ks_conf_err.h的KS_CONF_AUTO_SW):
+ *   速度≥KS_AUTO_SW_V_ON(50m/min)且纵向误差首次|err|<KS_AUTO_SW_ERR_THR(20丝=0.2mm)
+ *   →收敛锁存→bit13/bit15自动打开;速度<KS_AUTO_SW_V_OFF(48)→关闭并清锁存(须重新
+ *   达标才再开,防未收敛就接入);48~50迟滞带保持原状(防边界抖动致飞点反复复位暖机);
+ *   人机手动置1=强制打开(抵自动关),置0=解除强制交还自动——手动检测=镜像位≠governor
+ *   上拍回写值(人手改动经读同步进镜像,governor回写走整区写出,二者可区分);
+ *   生效值变化时回写镜像位,引擎自动推送人机→屏显始终=实际生效状态
+ * 误差源:aiError_V[0]人机显示平均误差(丢失哨兵-32768不参与收敛判定);
+ * 速度源:lrVelocity整机速度@m/min(主站31#广播,NoteDv同源);
+ * 调用:main主循环每拍无条件执行(不依赖主站通讯/精采样到位,机器停转也能关)
+ * |Yang.zj+开关自动governor 2026.11.19.133703 */
+#define KS_AUTO_SW_V_ON		50.0f	/* 自动开速度@m/min(≥此值才可能开) */
+#define KS_AUTO_SW_V_OFF	48.0f	/* 自动关速度@m/min(<此值关,48~50迟滞带保持原状) */
+#define KS_AUTO_SW_ERR_THR	20		/* 纵向误差收敛阈@丝(|aiError_V[0]|<此值锁存,0.2mm) */
+void KsConfAutoSwTick(float i_fVel, int16_t i_iErrV0, LP_VisuCommData i_pstVisuCommData)
+{
+	static uint8_t s_xArmed = 0;/* 收敛锁存:低速自动清零重新待命 */
+	static uint8_t s_xForce13 = 0, s_xForce15 = 0;/* 人机手动强制锁存(置1锁,置0解) */
+	static uint8_t s_xCmd13 = 0xFF, s_xCmd15 = 0xFF;/* governor上拍回写值(0xFF=未初始化) */
+	uint8_t xMan13, xMan15, xEff13, xEff15;
+	uint16_t wSw = i_pstVisuCommData->data_RW.wConfSwitch;
+
+	if (i_fVel < KS_AUTO_SW_V_OFF)
+	{
+		s_xArmed = 0;/* 低速:关+重新待命 */
+	}
+	else if (i_fVel >= KS_AUTO_SW_V_ON)
+	{
+		if (s_xArmed == 0 &&
+			i_iErrV0 > -30000 && i_iErrV0 < 30000 &&/* 丢失哨兵不算收敛 */
+			i_iErrV0 >= -KS_AUTO_SW_ERR_THR && i_iErrV0 <= KS_AUTO_SW_ERR_THR)
+		{
+			s_xArmed = 1;/* "误差第一次小于0.2mm"锁存 */
+		}
+	}
+
+	xMan13 = (uint8_t)((wSw >> 13) & 1u);
+	xMan15 = (uint8_t)((wSw >> 15) & 1u);
+	if (s_xCmd13 == 0xFFu) { s_xCmd13 = xMan13; s_xForce13 = xMan13; }/* 首拍以镜像现值为基线 */
+	else if (xMan13 != s_xCmd13) s_xForce13 = xMan13;/* 人手改位:1=强制开 0=解除 */
+	if (s_xCmd15 == 0xFFu) { s_xCmd15 = xMan15; s_xForce15 = xMan15; }
+	else if (xMan15 != s_xCmd15) s_xForce15 = xMan15;
+
+	xEff13 = (uint8_t)(s_xForce13 != 0 || s_xArmed != 0);/* 手动优先:强制位OR自动锁存 */
+	xEff15 = (uint8_t)(s_xForce15 != 0 || s_xArmed != 0);
+#if KS_USE_NEW_FLY_REMOVE
+	xEnableNewFlyRemove = xEff13;
+#endif
+#if KS_USE_CONF_ERR
+	xSwitchWrEn = xEff15;
+#endif
+
+	if (xEff13 != s_xCmd13 || xEff15 != s_xCmd15)/* 生效值变化才回写镜像(引擎推屏) */
+	{
+		wSw &= (uint16_t)~((uint16_t)1u << 13 | (uint16_t)1u << 15);
+		if (xEff13) wSw |= (uint16_t)1u << 13;
+		if (xEff15) wSw |= (uint16_t)1u << 15;
+		i_pstVisuCommData->data_RW.wConfSwitch = wSw;
+		s_xCmd13 = xEff13;
+		s_xCmd15 = xEff15;
+	}
+}
+#endif /* KS_CONF_AUTO_SW */
 
 void KS_SetData_485(
 		uint8_t xRoundSampleFlag,//粗采样标志@有效才刷新粗采样通讯数据

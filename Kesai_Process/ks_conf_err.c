@@ -70,8 +70,10 @@
 /* 运行时双开关自老架构移植回(默认0/0=上电完全原行为,同老架构;485建立后人机
  * data_RW.wConfSwitch bit14/bit15为准,解析见modbus485.c)
  * |移植回8.4+月影Pro 485开关下发 2026.11.13|默认全关 2026.11.13 */
-BYTE xEnableConfErr = 0;	 /* 置信度观察开关|=1计算并送人机显示|=0完全原行为(默认) */
-BYTE xSwitchWrEn = 0;		 /* 置信度接入开关|仅观察开关=1时有效:再=1融合误差才替换上报(默认) */
+BYTE xEnableConfErr = KS_CONF_AUTO_SW;/* 置信度观察开关|=1计算并送人机显示|=0完全原行为
+									   * 自动governor(KS_CONF_AUTO_SW=1)下默认1=预估/显示常开|Yang.zj+ 2026.11.19.133703 */
+BYTE xSwitchWrEn = 0;		 /* 置信度接入开关|仅观察开关=1时有效:再=1融合误差才替换上报(默认;
+							  * 自动模式下由governor按速度/收敛自动控制,见modbus485.c) */
 REAL rConfS50Mm = 0.08f;	 /* s50默认0.08mm|wang.c+双置信度融合 2026.11.9.165510 */
 REAL rConfTauSilk = KS_CONF_TAU_SILK;/* Qn容差τ@丝|默认12(2026.11.19由5改,现场5偏小压分过严),485下发wConfTau(读写3180,单位丝,1~100,
 									  * bit14=1才写入)|Yang.zj+τ变量化 2026.11.17.155754 */

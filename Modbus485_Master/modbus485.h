@@ -679,6 +679,11 @@ void KsUpdateDataRw(uint8_t xHmiToLocal,
 					StGrpParam* i_pstStGrpParam,
 					LP_VisuCommData i_pstVisuCommData);
 
+//开关自动governor:bit13飞点/bit15置信度接入按"速度≥50且纵向误差首次<20丝开,<48关(迟滞)"自动控制,
+//人机手动置1强制开/置0交还自动,生效状态回写屏显;仅在KS_CONF_AUTO_SW=1(ks_conf_err.h)时编译实现,
+//main主循环每拍无条件调用|Yang.zj+开关自动governor 2026.11.19.133703
+void KsConfAutoSwTick(float i_fVel, int16_t i_iErrV0, LP_VisuCommData i_pstVisuCommData);
+
 void KS_SetData_485(
 		uint8_t xRoundSampleFlag,//粗采样标志@有效才刷新粗采样通讯数据
 		uint8_t bySignalSelect_Cur,//当前轮询RGB通道
