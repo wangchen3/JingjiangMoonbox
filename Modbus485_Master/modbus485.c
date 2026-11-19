@@ -2972,12 +2972,15 @@ void KsUpdateDataRw(uint8_t xHmiToLocal,
 
 #if KS_CONF_AUTO_SW
 /* ---------------- 开关自动governor(bit13飞点/bit15置信度接入,速度+收敛自动控制) ----------------
- * 语义(详见ks_conf_err.h的KS_CONF_AUTO_SW):
+ * 语义(详见ks_conf_err.h的KS_CONF_AUTO_SW;2026.11.19.142649干预模型重设计):
  *   速度≥KS_AUTO_SW_V_ON(50m/min)且纵向误差首次|err|<KS_AUTO_SW_ERR_THR(20丝=0.2mm)
  *   →收敛锁存→bit13/bit15自动打开;速度<KS_AUTO_SW_V_OFF(48)→关闭并清锁存(须重新
  *   达标才再开,防未收敛就接入);48~50迟滞带保持原状(防边界抖动致飞点反复复位暖机);
- *   人机手动置1=强制打开(抵自动关),置0=解除强制交还自动——手动检测=镜像位≠governor
- *   上拍回写值(人手改动经读同步进镜像,governor回写走整区写出,二者可区分);
+ *   用户干预(轮内锁存,本轮我说了算/下轮机器自管):
+ *     置0=否决(INHIBIT)立即关,本轮内即使收敛也不再自动开(不弹回!);
+ *     置1=强制(FORCE)立即开,低速也不自动关;
+ *     轮结束沿(速度自≥V_OFF跌落<V_OFF)清两位干预,下一轮恢复自动;
+ *     手动检测=镜像位≠上拍生效值(人手改动经读同步进镜像,governor回写走整区写出);
  *   生效值变化时回写镜像位,引擎自动推送人机→屏显始终=实际生效状态
  * 误差源:aiError_V[0]人机显示平均误差(丢失哨兵-32768不参与收敛判定);
  * 速度源:lrVelocity整机速度@m/min(主站31#广播,NoteDv同源);
@@ -2988,13 +2991,29 @@ void KsUpdateDataRw(uint8_t xHmiToLocal,
 #define KS_AUTO_SW_ERR_THR	20		/* 纵向误差收敛阈@丝(|aiError_V[0]|<此值锁存,0.2mm) */
 void KsConfAutoSwTick(float i_fVel, int16_t i_iErrV0, LP_VisuCommData i_pstVisuCommData)
 {
+	/* 干预模型(2026.11.19.142649重设计,替代"置0交还自动"旧语义——旧语义人手置0会被自动
+	 * 弹回1,用户明确否决):每轮印刷自动管理,轮内用户干预锁存——
+	 *   人手置0=否决锁存(INHIBIT):立即关,且本轮内即使armed也不再自动打开;
+	 *   人手置1=强制锁存(FORCE):立即开,低速也不自动关;
+	 *   轮结束沿=速度自运行段(≥V_OFF)跌落<V_OFF:两位干预锁存清除,下一轮恢复自动管理
+	 *   ("本轮我说了算,下轮机器自管";停止期间设置的干预顺延到下一轮结束沿失效,
+	 *   防止升速瞬间强制蒸发造成未收敛间隙闪断)|Yang.zj+ */
 	static uint8_t s_xArmed = 0;/* 收敛锁存:低速自动清零重新待命 */
-	static uint8_t s_xForce13 = 0, s_xForce15 = 0;/* 人机手动强制锁存(置1锁,置0解) */
-	static uint8_t s_xCmd13 = 0xFF, s_xCmd15 = 0xFF;/* governor上拍回写值(0xFF=未初始化) */
-	uint8_t xMan13, xMan15, xEff13, xEff15;
+	static uint8_t s_xOv13 = 0, s_xOv15 = 0;/* 用户干预锁存:0=无(自动) 1=FORCE强制开 2=INHIBIT否决 */
+	static uint8_t s_xInRunPre = 0;/* 上一拍是否在运行段(≥V_OFF),轮结束沿=跌落检测 */
+	static uint8_t s_xCmd13 = 0xFF, s_xCmd15 = 0xFF;/* 上拍生效值(0xFF=未初始化) */
+	uint8_t xMan13, xMan15, xEff13, xEff15, xInRun;
 	uint16_t wSw = i_pstVisuCommData->data_RW.wConfSwitch;
 
-	if (i_fVel < KS_AUTO_SW_V_OFF)
+	xInRun = (uint8_t)(i_fVel >= KS_AUTO_SW_V_OFF);
+	if (s_xInRunPre != 0 && xInRun == 0)/* 本轮结束沿:清用户干预,下一轮恢复自动 */
+	{
+		s_xOv13 = 0;
+		s_xOv15 = 0;
+	}
+	s_xInRunPre = xInRun;
+
+	if (xInRun == 0)
 	{
 		s_xArmed = 0;/* 低速:关+重新待命 */
 	}
@@ -3010,13 +3029,13 @@ void KsConfAutoSwTick(float i_fVel, int16_t i_iErrV0, LP_VisuCommData i_pstVisuC
 
 	xMan13 = (uint8_t)((wSw >> 13) & 1u);
 	xMan15 = (uint8_t)((wSw >> 15) & 1u);
-	if (s_xCmd13 == 0xFFu) { s_xCmd13 = xMan13; s_xForce13 = xMan13; }/* 首拍以镜像现值为基线 */
-	else if (xMan13 != s_xCmd13) s_xForce13 = xMan13;/* 人手改位:1=强制开 0=解除 */
-	if (s_xCmd15 == 0xFFu) { s_xCmd15 = xMan15; s_xForce15 = xMan15; }
-	else if (xMan15 != s_xCmd15) s_xForce15 = xMan15;
+	if (s_xCmd13 == 0xFFu) { s_xCmd13 = xMan13; }/* 首拍以镜像现值为基线 */
+	else if (xMan13 != s_xCmd13) s_xOv13 = (uint8_t)(xMan13 ? 1u : 2u);/* 人手边沿:1=FORCE 0=INHIBIT */
+	if (s_xCmd15 == 0xFFu) { s_xCmd15 = xMan15; }
+	else if (xMan15 != s_xCmd15) s_xOv15 = (uint8_t)(xMan15 ? 1u : 2u);
 
-	xEff13 = (uint8_t)(s_xForce13 != 0 || s_xArmed != 0);/* 手动优先:强制位OR自动锁存 */
-	xEff15 = (uint8_t)(s_xForce15 != 0 || s_xArmed != 0);
+	xEff13 = (s_xOv13 == 1u) ? 1u : ((s_xOv13 == 2u) ? 0u : s_xArmed);/* 无干预跟自动,干预锁存说了算 */
+	xEff15 = (s_xOv15 == 1u) ? 1u : ((s_xOv15 == 2u) ? 0u : s_xArmed);
 #if KS_USE_NEW_FLY_REMOVE
 	xEnableNewFlyRemove = xEff13;
 #endif
@@ -3024,9 +3043,8 @@ void KsConfAutoSwTick(float i_fVel, int16_t i_iErrV0, LP_VisuCommData i_pstVisuC
 	xSwitchWrEn = xEff15;
 #endif
 
-	/* 回写条件与镜像现值比(非与s_xCmd比):人机改位后无论生效值是否变化,都要把屏显拉回
-	 * 实际生效状态——修复①:自动开时人手置0"交还自动",生效值不变(仍开)但镜像已被人手改0,
-	 * 原与s_xCmd比会漏回写,致屏显0/实际开永久失真|Yang.zj+回写条件改镜像比较 2026.11.19.141312 */
+	/* 回写条件与镜像现值比:人机改位后屏显立即=实际生效状态(人手置0=否决生效,屏显保持0
+	 * 不再弹回;修复①机制沿用)|Yang.zj+回写条件与镜像比较 2026.11.19.141312 */
 	if (xEff13 != xMan13 || xEff15 != xMan15)
 	{
 		wSw &= (uint16_t)~((uint16_t)1u << 13 | (uint16_t)1u << 15);
@@ -3034,11 +3052,7 @@ void KsConfAutoSwTick(float i_fVel, int16_t i_iErrV0, LP_VisuCommData i_pstVisuC
 		if (xEff15) wSw |= (uint16_t)1u << 15;
 		i_pstVisuCommData->data_RW.wConfSwitch = wSw;
 	}
-	/* s_xCmd每拍无条件同步为生效值(不能只在回写时更新):修复②——人手置1且生效值恰好
-	 * 同意(=1,不触发回写)时s_xCmd停留旧值0,之后人手置0时镜像(0)==s_xCmd(0)边沿检测
-	 * 不到,强制锁存清不掉,掉速后仍强制开(状态机仿真t13→t14实锤);同步后s_xCmd始终=
-	 * 屏幕应有的生效状态,人手偏离它即被识别|Yang.zj+ 2026.11.19.141312 */
-	s_xCmd13 = xEff13;
+	s_xCmd13 = xEff13;/* 每拍无条件同步生效值(修复②机制沿用:边沿检测的基准) */
 	s_xCmd15 = xEff15;
 }
 #endif /* KS_CONF_AUTO_SW */
