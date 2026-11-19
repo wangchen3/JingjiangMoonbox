@@ -3024,15 +3024,22 @@ void KsConfAutoSwTick(float i_fVel, int16_t i_iErrV0, LP_VisuCommData i_pstVisuC
 	xSwitchWrEn = xEff15;
 #endif
 
-	if (xEff13 != s_xCmd13 || xEff15 != s_xCmd15)/* 生效值变化才回写镜像(引擎推屏) */
+	/* 回写条件与镜像现值比(非与s_xCmd比):人机改位后无论生效值是否变化,都要把屏显拉回
+	 * 实际生效状态——修复①:自动开时人手置0"交还自动",生效值不变(仍开)但镜像已被人手改0,
+	 * 原与s_xCmd比会漏回写,致屏显0/实际开永久失真|Yang.zj+回写条件改镜像比较 2026.11.19.141312 */
+	if (xEff13 != xMan13 || xEff15 != xMan15)
 	{
 		wSw &= (uint16_t)~((uint16_t)1u << 13 | (uint16_t)1u << 15);
 		if (xEff13) wSw |= (uint16_t)1u << 13;
 		if (xEff15) wSw |= (uint16_t)1u << 15;
 		i_pstVisuCommData->data_RW.wConfSwitch = wSw;
-		s_xCmd13 = xEff13;
-		s_xCmd15 = xEff15;
 	}
+	/* s_xCmd每拍无条件同步为生效值(不能只在回写时更新):修复②——人手置1且生效值恰好
+	 * 同意(=1,不触发回写)时s_xCmd停留旧值0,之后人手置0时镜像(0)==s_xCmd(0)边沿检测
+	 * 不到,强制锁存清不掉,掉速后仍强制开(状态机仿真t13→t14实锤);同步后s_xCmd始终=
+	 * 屏幕应有的生效状态,人手偏离它即被识别|Yang.zj+ 2026.11.19.141312 */
+	s_xCmd13 = xEff13;
+	s_xCmd15 = xEff15;
 }
 #endif /* KS_CONF_AUTO_SW */
 
