@@ -697,7 +697,10 @@ int main(void)
 #if KS_CONF_AUTO_SW
 		//开关自动governor:主循环每拍无条件执行(bit13/15按速度+收敛自动控制,详见modbus485.c
 		//的KsConfAutoSwTick;不受主站通讯/精采样状态影响,机器停转也能及时关)|Yang.zj+ 2026.11.19.133703
-		KsConfAutoSwTick(stStGrpParam.lrVelocity, aiError_V[0], &g_stVisuCommData);
+		KsConfAutoSwTick(stStGrpParam.lrVelocity, aiError_V[0],
+				(uint8_t)(stStAxisParam.wStatusRef & 0x01u),/*套色自动/手动:纵向自动位wStatusRef.0*/
+				stStAxisParam.xLocalAxisRollerDn,/*压辊压下状态(物理条件门,2026.11.20)*/
+				&g_stVisuCommData);
 #endif
 		//2025.7.22.182037同步
 		//485通讯赋值处理

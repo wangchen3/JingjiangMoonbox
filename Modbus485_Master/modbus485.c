@@ -2989,7 +2989,9 @@ void KsUpdateDataRw(uint8_t xHmiToLocal,
 #define KS_AUTO_SW_V_ON		50.0f	/* 自动开速度@m/min(≥此值才可能开) */
 #define KS_AUTO_SW_V_OFF	48.0f	/* 自动关速度@m/min(<此值关,48~50迟滞带保持原状) */
 #define KS_AUTO_SW_ERR_THR	20		/* 纵向误差收敛阈@丝(|aiError_V[0]|<此值锁存,0.2mm) */
-void KsConfAutoSwTick(float i_fVel, int16_t i_iErrV0, LP_VisuCommData i_pstVisuCommData)
+void KsConfAutoSwTick(float i_fVel, int16_t i_iErrV0,
+						uint8_t i_xAutoMode, uint8_t i_xRollerDn,
+						LP_VisuCommData i_pstVisuCommData)
 {
 	/* 干预模型(2026.11.19.142649重设计,替代"置0交还自动"旧语义——旧语义人手置0会被自动
 	 * 弹回1,用户明确否决):每轮印刷自动管理,轮内用户干预锁存——
@@ -2997,13 +2999,20 @@ void KsConfAutoSwTick(float i_fVel, int16_t i_iErrV0, LP_VisuCommData i_pstVisuC
 	 *   人手置1=强制锁存(FORCE):立即开,低速也不自动关;
 	 *   轮结束沿=速度自运行段(≥V_OFF)跌落<V_OFF:两位干预锁存清除,下一轮恢复自动管理
 	 *   ("本轮我说了算,下轮机器自管";停止期间设置的干预顺延到下一轮结束沿失效,
-	 *   防止升速瞬间强制蒸发造成未收敛间隙闪断)|Yang.zj+ */
-	static uint8_t s_xArmed = 0;/* 收敛锁存:低速自动清零重新待命 */
+	 *   防止升速瞬间强制蒸发造成未收敛间隙闪断)|Yang.zj+
+	 * 物理条件门(2026.11.20.104704新增,门=套色自动(wStatusRef.0纵向自动位=1)且压辊压下):
+	 *   门不开(套色手动或压辊抬起)→一律关(无视用户FORCE,物理条件优先)并清收敛锁存;
+	 *   自动开需"门开+速度≥V_ON+误差收敛"三条件齐;门恢复后:用户FORCE锁存复活即重开,
+	 *   AUTO路径须重新收敛(手动修正/抬辊期间旧锁存不可信);干预锁存不受门影响(仅轮结束沿清)
+	 *   |Yang.zj+物理条件门 */
+	static uint8_t s_xArmed = 0;/* 收敛锁存:低速/套色手动/抬辊自动清零重新待命 */
 	static uint8_t s_xOv13 = 0, s_xOv15 = 0;/* 用户干预锁存:0=无(自动) 1=FORCE强制开 2=INHIBIT否决 */
 	static uint8_t s_xInRunPre = 0;/* 上一拍是否在运行段(≥V_OFF),轮结束沿=跌落检测 */
 	static uint8_t s_xCmd13 = 0xFF, s_xCmd15 = 0xFF;/* 上拍生效值(0xFF=未初始化) */
-	uint8_t xMan13, xMan15, xEff13, xEff15, xInRun;
+	uint8_t xMan13, xMan15, xEff13, xEff15, xInRun, xGateOK;
 	uint16_t wSw = i_pstVisuCommData->data_RW.wConfSwitch;
+
+	xGateOK = (uint8_t)((i_xAutoMode != 0 && i_xRollerDn != 0) ? 1 : 0);/* 物理条件门 */
 
 	xInRun = (uint8_t)(i_fVel >= KS_AUTO_SW_V_OFF);
 	if (s_xInRunPre != 0 && xInRun == 0)/* 本轮结束沿:清用户干预,下一轮恢复自动 */
@@ -3013,9 +3022,9 @@ void KsConfAutoSwTick(float i_fVel, int16_t i_iErrV0, LP_VisuCommData i_pstVisuC
 	}
 	s_xInRunPre = xInRun;
 
-	if (xInRun == 0)
+	if (xInRun == 0 || xGateOK == 0)
 	{
-		s_xArmed = 0;/* 低速:关+重新待命 */
+		s_xArmed = 0;/* 低速/套色手动/压辊抬起:清收敛锁存 */
 	}
 	else if (i_fVel >= KS_AUTO_SW_V_ON)
 	{
@@ -3034,8 +3043,9 @@ void KsConfAutoSwTick(float i_fVel, int16_t i_iErrV0, LP_VisuCommData i_pstVisuC
 	if (s_xCmd15 == 0xFFu) { s_xCmd15 = xMan15; }
 	else if (xMan15 != s_xCmd15) s_xOv15 = (uint8_t)(xMan15 ? 1u : 2u);
 
-	xEff13 = (s_xOv13 == 1u) ? 1u : ((s_xOv13 == 2u) ? 0u : s_xArmed);/* 无干预跟自动,干预锁存说了算 */
-	xEff15 = (s_xOv15 == 1u) ? 1u : ((s_xOv15 == 2u) ? 0u : s_xArmed);
+	/* 生效值:物理条件优先(门不开一律关,含FORCE);门开时无干预跟自动,干预锁存说了算 */
+	xEff13 = (xGateOK == 0) ? 0u : ((s_xOv13 == 1u) ? 1u : ((s_xOv13 == 2u) ? 0u : s_xArmed));
+	xEff15 = (xGateOK == 0) ? 0u : ((s_xOv15 == 1u) ? 1u : ((s_xOv15 == 2u) ? 0u : s_xArmed));
 #if KS_USE_NEW_FLY_REMOVE
 	xEnableNewFlyRemove = xEff13;
 #endif
