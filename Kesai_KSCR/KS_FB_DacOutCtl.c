@@ -206,6 +206,9 @@ void KS_OffsetAutoCtl_T1T2(uint8_t i_xEn,//调整使能
 	static uint8_t uiBaseLine_Pre_T2;
 	static float fScale_Down_T1=1.0;
 	static float fScale_Down_T2=1.0;
+	/* ARM退出清bit4钩子:置1=本轮由ARM正常结束(稳定3s/10min强退),布防块据此区分
+	 * "ARM自己清位"与"人手按0"(后者=一键全关)|Yang.zj+人手一键全关 2026.11.22.103736 */
+	static uint8_t s_xArmClearedAdj = 0;
 	if(i_xEn)
 	{
 		//2026.9.8屏蔽|偏移自调仅保留人机界面bit4手动触发,不再自动触发
@@ -224,30 +227,46 @@ void KS_OffsetAutoCtl_T1T2(uint8_t i_xEn,//调整使能
 		//获取上一次印刷状态和压辊状态
 		//xLocalAxisRollerDn_Pre=i_xLocalAxisRollerDn;
 
-		/* ---------- 偏移自调自动触发(布防授权模式,2026.11.22.100639按用户新需求恢复) ----------
-		 * 2026.9.8版自动触发已屏蔽(仅bit4手动);现改为授权式自动:
+		/* ---------- 偏移自调自动触发(布防授权模式,2026.11.22.100639按用户新需求恢复;
+		 * 2026.11.22.103736修订:①删bit5锁定提示——bit5是同一字上光源侧"自动聚焦开关"
+		 * (KS_SourceLightAutoCtl:460读/:591/:601清),占位会互相污染(点布防清位会静默关
+		 * 聚焦/失败置位会误启聚焦/聚焦退出清位吞提示),3次失败撤防改为静默;
+		 * ②新增"人手按0一键全关":bit4下跌沿且非ARM退出清位(钩子s_xArmClearedAdj区分)
+		 * =操作员关闭→撤防+失败清零,一下全关;③触发阈值对齐governor口径≥50) ----------
+		 * 语义:
 		 *   布防=bit4任一位置1(人手点击即布防,不限速度;点击同时手动调整照跑;自动触发自确认无副作用);
-		 *   撤防=速度<48m/min(清布防/失败计数;若自动那轮在跑则强退,低速手动调整不受影响);
-		 *   自动触发=布防 && v>50m/min && 压辊压下 && (T1或T2基线>180或<28)且当前不在调
+		 *   撤防①=轮结束沿(速度自≥48跌落<48):清布防/失败计数,自动轮在跑则强退(低速手动不受影响;
+		 *           用沿而非电平——电平会把低速点击同拍的布防又撤掉,同governor轮结束沿);
+		 *   撤防②=人手按0(调整进行中):一键全关(撤防+停当前轮+失败清零);空闲置0无沿不响应;
+		 *   自动触发=布防 && v≥50m/min && 压辊压下 && (T1或T2基线>180或<28)且当前不在调
 		 *           →置bit4复用现有执行/退出/回显全套机制(退出条件=回64±10稳定3s或10min强退);
-		 *   失败保护=自动轮结束时基线仍越界计1次失败,连续3次→撤防+置bit5"调整无效锁定"
-		 *           (提示人工处理,重新点bit4再布防时自动清);任一次调成功即清零失败计数
+		 *   失败保护(静默)=自动轮结束时基线仍越界计1次失败,连续3次撤防(无屏显提示,
+		 *           现象=自动调整不再动作,重新点bit4即重新布防);任一次调成功即清零失败计数
 		 *   阈值180/28@8bit基线,目标64,退出点离阈值远,天然回差不会抖动连发|Yang.zj+ */
 		{
 			static uint8_t s_xArmedAdj = 0;/* 布防锁存 */
 			static uint8_t s_xAutoActive = 0;/* 当前这轮为自动触发(撤防强退判定用) */
 			static uint8_t s_byFailCnt = 0;/* 连续失败计数(自动轮结束基线仍越界) */
-			static uint8_t s_xVelInRunPre = 0;/* 上一拍是否运行段(≥48),撤防=下跌沿(电平会
-											*把低速点击同拍的布防又撤掉,同governor轮结束沿) */
+			static uint8_t s_xVelInRunPre = 0;/* 上一拍是否运行段(≥48) */
+			static uint8_t s_xBit4Pre = 0;/* 上一拍bit4值(下跌沿判别人手按0) */
 			uint8_t xBaseOut_T1 = (uint8_t)(i_fBaseLine_T1 > 180.0f || i_fBaseLine_T1 < 28.0f);
 			uint8_t xBaseOut_T2 = (uint8_t)(i_fBaseLine_T2 > 180.0f || i_fBaseLine_T2 < 28.0f);
 			uint8_t xManuNow = KSGetDataBit(i_puiSwitchAndState_OffsetCtl,4);
 			uint8_t xVelInRun = (uint8_t)(i_rVel_Axis >= 48.0f);
 
+			/* 人手按0判别:bit4自1跌0且ARM退出钩子未置位(ARM正常结束自己清位必置钩子)
+			 * →操作员关闭=一键全关(撤防+失败清零;不算失败,不重触发) */
+			if (s_xBit4Pre != 0 && xManuNow == 0 && s_xArmClearedAdj == 0)
+			{
+				s_xArmedAdj = 0;
+				s_xAutoActive = 0;
+				s_byFailCnt = 0;
+			}
+			s_xArmClearedAdj = 0;/* 钩子消费 */
+
 			if (xManuNow != 0)
 			{
 				s_xArmedAdj = 1;/* 点击即布防 */
-				KSSetDataBit(i_puiSwitchAndState_OffsetCtl,0,5);/* 重新布防清失败锁定提示 */
 			}
 
 			if (s_xVelInRunPre != 0 && xVelInRun == 0)/* 轮结束沿(自≥48跌落<48):撤防 */
@@ -264,7 +283,8 @@ void KS_OffsetAutoCtl_T1T2(uint8_t i_xEn,//调整使能
 			s_xVelInRunPre = xVelInRun;
 
 			if (s_xAutoActive != 0 && xManuNow == 0)/* 自动轮已结束(ARM清bit4后下一拍看到;
-				* 必须先于触发判定,否则失败轮被立即重触发致失败计数永不增长) */
+				* 必须先于触发判定,否则失败轮被立即重触发致失败计数永不增长;
+				* 人手关的那轮已在上面撤防分支处理,不算失败) */
 			{
 				s_xAutoActive = 0;
 				if (xBaseOut_T1 != 0 || xBaseOut_T2 != 0)
@@ -278,20 +298,21 @@ void KS_OffsetAutoCtl_T1T2(uint8_t i_xEn,//调整使能
 			}
 
 			if (s_xArmedAdj != 0 && xManuNow == 0 &&/* 布防且当前不在调 */
-				i_rVel_Axis > 50.0f && i_xLocalAxisRollerDn != 0 &&/* v>50且压辊压下 */
+				i_rVel_Axis >= 50.0f && i_xLocalAxisRollerDn != 0 &&/* v≥50且压辊压下 */
 				(xBaseOut_T1 != 0 || xBaseOut_T2 != 0))/* 任一路基线越界 */
 			{
 				if (s_byFailCnt < 3)
 				{
 					KSSetDataBit(i_puiSwitchAndState_OffsetCtl,1,4);/* 复用手动执行机构 */
 					s_xAutoActive = 1;
+					xManuNow = 1;/* 本拍等效已置位(供s_xBit4Pre记录及后续逻辑一致) */
 				}
 				else
 				{
-					s_xArmedAdj = 0;/* 连续3次调不动:撤防+锁定提示,待人工重新布防 */
-					KSSetDataBit(i_puiSwitchAndState_OffsetCtl,1,5);
+					s_xArmedAdj = 0;/* 连续3次调不动:静默撤防(重新点bit4再布防) */
 				}
 			}
+			s_xBit4Pre = xManuNow;
 		}
 
 		xManu_OffsetCtl = KSGetDataBit(i_puiSwitchAndState_OffsetCtl,4) /*&& i_xFlag_Print*/;
@@ -355,6 +376,7 @@ void KS_OffsetAutoCtl_T1T2(uint8_t i_xEn,//调整使能
 				if(uiTime_xBaseDone_OffsetAutoCtl>=3000)
 				{
 					xManu_OffsetCtl=0;
+					s_xArmClearedAdj=1;/* ARM退出清位钩子(布防块区分人手按0)|Yang.zj+ 2026.11.22.103736 */
 				}
 			}
 			else
@@ -365,6 +387,7 @@ void KS_OffsetAutoCtl_T1T2(uint8_t i_xEn,//调整使能
 				if(dwRemainTime_OffsetCtl>=600000 /*|| !i_xLocalAxisRollerDn*/)
 				{
 					xManu_OffsetCtl=0;
+					s_xArmClearedAdj=1;/* ARM退出清位钩子(布防块区分人手按0)|Yang.zj+ 2026.11.22.103736 */
 				}
 			}
 
