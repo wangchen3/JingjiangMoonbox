@@ -228,8 +228,16 @@ typedef struct tagDynaData_WO_485
 //只写动态变化数据,不稳定的数据
 typedef struct tagDynaData_WO_485_Ex
 {
-	uint16_t 	wSa;//预留
-	uint16_t 	aRsv_HignComm[119];//预留
+	uint16_t 	wSa;//预留@MCGS121
+	uint16_t 	aRsv_Torque[9];//人机工程已绑iTorque_*/iVel_*(MCGS122~130),ARM不写,勿动
+	//2026.11.22置信度显示三字自读写区挪入(原3179/3181/3182,读写区每圈抖动致整区强制同步,
+	//见Data_RW注释;本区为ARM→人机单向只写快速区,抖动不再影响读写区读回/方向判别)
+	uint16_t 	wConfPack;	//置信度@MCGS只写131:高8位=纵向融合置信度F(0~100取整钳位)|低8位=横向F,
+						//屏侧脚本自行拆字节(V=wConfPack/256,H=wConfPack%256);观察开关bit14关时送0
+	uint16_t 	wConfCk;	//CK子分@MCGS只写132:高8位=纵向C×100|低8位=横向C,打包同上;bit14=0时送0
+	uint16_t 	wConfQn;	//Qn子分@MCGS只写133:高8位=纵向Qn|低8位=横向Qn;流无效当圈分量为0,
+						//丢失圈保持上次值;bit14=0时送0
+	uint16_t 	aRsv_HignComm[107];//预留@MCGS134~240
 
 }DynaData_WO_485_Ex,*LP_DynaData_WO_485_Ex;
 
@@ -423,19 +431,15 @@ typedef struct tagData_RW
 						//(人机主权,ARM默认全0=上电原行为;bit0~3/8~12人机已占,勿动)
 	uint16_t	wConfS50;	//CK一致度尺度s50输入,单位0.001mm(80=0.08mm默认),
 						//有效范围1~1000,越界ARM保持原值,bit14=1时才生效,下一圈生效
-	uint16_t	wConfPack;	//置信度显示@MCGS读写3179:高8位=纵向融合置信度F(0~100取整钳位)
-						//|低8位=横向F,屏侧脚本自行拆字节(V=wConfPack/256,H=wConfPack%256);
-						//观察开关bit14关闭时送0(完全原行为,同老架构6207口径)
+	uint16_t	wRsv_RdWr0;	//预留占位@MCGS读写3179:原wConfPack挪只写区后留位,保wConfTau地址3180不变
+						//|置信度显示三字挪只写区 2026.11.22
 	uint16_t	wConfTau;	//Qn容差τ输入@MCGS读写3180,单位丝(12=默认,2026.11.19由5改;原固定值5):Qn=100·erf(τ/(√2·jp)),
 						//有效范围1~100,越界ARM保持原值,bit14=1时才生效,下一圈生效
 						//|Yang.zj+τ变量化(原固定5丝) 2026.11.17.155754
-	uint16_t	wConfCk;	//CK置信度显示@MCGS读写3181(ARM写/人机读):高8位=纵向C×100|低8位=横向C,
-						//0~100取整钳位,屏侧拆字节同wConfPack(V=/256,H=%256);bit14=0时送0
-						//|Yang.zj+CK/Qn观测上报 2026.11.17.162027
-	uint16_t	wConfQn;	//Qn置信度显示@MCGS读写3182(ARM写/人机读):高8位=纵向Qn|低8位=横向Qn,
-						//打包同上;流无效当圈该分量为0,丢失圈保持上次值;bit14=0时送0
-						//|Yang.zj+CK/Qn观测上报 2026.11.17.162027
-	uint16_t	awRsv_RdWr[58];	//先预留着-双向区域
+	uint16_t	awRsv_RdWr[60];	//先预留着-双向区域
+	//2026.11.22 置信度显示三字wConfPack/wConfCk/wConfQn挪只写快速区131~133(原读写区3179/3181/3182
+	//	每圈抖动→整区强制同步,memcmp方向误判持续走TRUE分支挤掉本地→人机镜像刷新,且写帧
+	//	优先挤占读回致人机输入响应变慢);占位字wRsv_RdWr0保τ地址3180不变|58->60
 	//2026.11.17 CK/Qn显示占用 wConfCk+wConfQn|60->58|Yang.zj+ 2026.11.17.162027
 	//2026.11.17 τ变量化占用 wConfTau|61->60|Yang.zj+ 2026.11.17.155754
 	//2026.11.13飞点/置信度开关下发+置信度显示占用 wConfSwitch+wConfS50+wConfPack|64->61

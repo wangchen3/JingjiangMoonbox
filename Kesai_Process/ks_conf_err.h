@@ -62,7 +62,7 @@
  * 本工程对应人机data_RW.wConfSwitch bit14/bit15,解析见modbus485.c):
  * 默认0/0=上电完全原行为(同老架构),485建立后人机开关为准
  * |wang.c+双置信度融合 2026.11.9.165510|开关语义解耦 2026.11.12|移植回8.4+月影Pro|默认全关 2026.11.13 */
-extern BYTE xEnableConfErr;		/* 置信度观察开关|=1计算置信度并送人机显示(data_RW.wConfPack),
+extern BYTE xEnableConfErr;		/* 置信度观察开关|=1计算置信度并送人机显示(dynaData_WO_Ex.wConfPack),
 								 * 误差链按xSwitchWrEn决定|=0完全原行为(默认,显示值送0) */
 extern BYTE xSwitchWrEn;		/* 置信度接入误差链开关|仅在xEnableConfErr=1时有效:
 								 * 再=1融合误差替换上报iVerror/iHerror|=0只显示不接入(默认) */
@@ -80,12 +80,12 @@ extern REAL rConfTauSilk;		/* Qn容差τ@丝|Qn=100·erf(τ/(√2·jp)),τ越大
 								 * 抖动越宽容(Qn越易得高分) */
 
 /* 每圈置信度记录变量(0~100,有效圈刷新,丢失圈保持上次值便于观测;485显示挂点
- * data_RW.wConfPack@MCGS读写3179高低字节打包,见modbus485.c的KS_SetData_485) */
+ * dynaData_WO_Ex.wConfPack@MCGS只写131高低字节打包,见modbus485.c的KS_SetData_485) */
 extern REAL rConfLastRevV;		/* 纵向本圈融合置信度F×100|wang.c+双置信度融合 2026.11.9.165510 */
 extern REAL rConfLastRevH;		/* 横向本圈融合置信度F×100|wang.c+双置信度融合 2026.11.9.165510 */
 
 /* CK/Qn子分数每圈记录(0~100,有效圈刷新,丢失圈保持上次值;流无效当圈为0):
- * 485观测上报 data_RW.wConfCk/wConfQn@MCGS读写3181/3182,高8位=纵向|低8位=横向,
+ * 485观测上报 dynaData_WO_Ex.wConfCk/wConfQn@MCGS只写132/133,高8位=纵向|低8位=横向,
  * 0~100取整钳位打包见modbus485.c的KS_SetData_485(与wConfPack同款),bit14=0时送0
  * |Yang.zj+CK/Qn观测上报 2026.11.17.162027 */
 extern REAL rConfCkLastV;		/* 纵向本圈CK置信度C×100 */

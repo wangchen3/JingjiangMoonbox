@@ -80,7 +80,7 @@ REAL rConfTauSilk = KS_CONF_TAU_SILK;/* Qn容差τ@丝|默认12(2026.11.19由5�
 REAL rConfLastRevV = 0.0f;	/* 纵向每圈融合置信度记录0~100 */
 REAL rConfLastRevH = 0.0f;	/* 横向每圈融合置信度记录0~100 */
 /* CK/Qn子分数每圈记录(0~100,有效圈刷新,丢失圈保持上次值;供485观测上报
- * wConfCk/wConfQn@读写3181/3182,modbus485.c打包成整数字节)|Yang.zj+CK/Qn观测上报 2026.11.17.162027 */
+ * wConfCk/wConfQn@只写132/133,modbus485.c打包成整数字节)|Yang.zj+CK/Qn观测上报 2026.11.17.162027|挪只写区 2026.11.22 */
 REAL rConfCkLastV = 0.0f;	/* 纵向本圈CK置信度C×100(短板流,流无效时为0) */
 REAL rConfQnLastV = 0.0f;	/* 纵向本圈Qn置信度(0~100,流无效时为0) */
 REAL rConfCkLastH = 0.0f;	/* 横向本圈CK置信度C×100 */
