@@ -224,6 +224,76 @@ void KS_OffsetAutoCtl_T1T2(uint8_t i_xEn,//调整使能
 		//获取上一次印刷状态和压辊状态
 		//xLocalAxisRollerDn_Pre=i_xLocalAxisRollerDn;
 
+		/* ---------- 偏移自调自动触发(布防授权模式,2026.11.22.100639按用户新需求恢复) ----------
+		 * 2026.9.8版自动触发已屏蔽(仅bit4手动);现改为授权式自动:
+		 *   布防=bit4任一位置1(人手点击即布防,不限速度;点击同时手动调整照跑;自动触发自确认无副作用);
+		 *   撤防=速度<48m/min(清布防/失败计数;若自动那轮在跑则强退,低速手动调整不受影响);
+		 *   自动触发=布防 && v>50m/min && 压辊压下 && (T1或T2基线>180或<28)且当前不在调
+		 *           →置bit4复用现有执行/退出/回显全套机制(退出条件=回64±10稳定3s或10min强退);
+		 *   失败保护=自动轮结束时基线仍越界计1次失败,连续3次→撤防+置bit5"调整无效锁定"
+		 *           (提示人工处理,重新点bit4再布防时自动清);任一次调成功即清零失败计数
+		 *   阈值180/28@8bit基线,目标64,退出点离阈值远,天然回差不会抖动连发|Yang.zj+ */
+		{
+			static uint8_t s_xArmedAdj = 0;/* 布防锁存 */
+			static uint8_t s_xAutoActive = 0;/* 当前这轮为自动触发(撤防强退判定用) */
+			static uint8_t s_byFailCnt = 0;/* 连续失败计数(自动轮结束基线仍越界) */
+			static uint8_t s_xVelInRunPre = 0;/* 上一拍是否运行段(≥48),撤防=下跌沿(电平会
+											*把低速点击同拍的布防又撤掉,同governor轮结束沿) */
+			uint8_t xBaseOut_T1 = (uint8_t)(i_fBaseLine_T1 > 180.0f || i_fBaseLine_T1 < 28.0f);
+			uint8_t xBaseOut_T2 = (uint8_t)(i_fBaseLine_T2 > 180.0f || i_fBaseLine_T2 < 28.0f);
+			uint8_t xManuNow = KSGetDataBit(i_puiSwitchAndState_OffsetCtl,4);
+			uint8_t xVelInRun = (uint8_t)(i_rVel_Axis >= 48.0f);
+
+			if (xManuNow != 0)
+			{
+				s_xArmedAdj = 1;/* 点击即布防 */
+				KSSetDataBit(i_puiSwitchAndState_OffsetCtl,0,5);/* 重新布防清失败锁定提示 */
+			}
+
+			if (s_xVelInRunPre != 0 && xVelInRun == 0)/* 轮结束沿(自≥48跌落<48):撤防 */
+			{
+				s_xArmedAdj = 0;
+				if (s_xAutoActive != 0 && xManuNow != 0)
+				{
+					KSSetDataBit(i_puiSwitchAndState_OffsetCtl,0,4);/* 强退自动那轮 */
+					xManuNow = 0;
+				}
+				s_xAutoActive = 0;
+				s_byFailCnt = 0;
+			}
+			s_xVelInRunPre = xVelInRun;
+
+			if (s_xAutoActive != 0 && xManuNow == 0)/* 自动轮已结束(ARM清bit4后下一拍看到;
+				* 必须先于触发判定,否则失败轮被立即重触发致失败计数永不增长) */
+			{
+				s_xAutoActive = 0;
+				if (xBaseOut_T1 != 0 || xBaseOut_T2 != 0)
+				{
+					s_byFailCnt++;/* 调完仍越界=失败 */
+				}
+				else
+				{
+					s_byFailCnt = 0;/* 调成功清零 */
+				}
+			}
+
+			if (s_xArmedAdj != 0 && xManuNow == 0 &&/* 布防且当前不在调 */
+				i_rVel_Axis > 50.0f && i_xLocalAxisRollerDn != 0 &&/* v>50且压辊压下 */
+				(xBaseOut_T1 != 0 || xBaseOut_T2 != 0))/* 任一路基线越界 */
+			{
+				if (s_byFailCnt < 3)
+				{
+					KSSetDataBit(i_puiSwitchAndState_OffsetCtl,1,4);/* 复用手动执行机构 */
+					s_xAutoActive = 1;
+				}
+				else
+				{
+					s_xArmedAdj = 0;/* 连续3次调不动:撤防+锁定提示,待人工重新布防 */
+					KSSetDataBit(i_puiSwitchAndState_OffsetCtl,1,5);
+				}
+			}
+		}
+
 		xManu_OffsetCtl = KSGetDataBit(i_puiSwitchAndState_OffsetCtl,4) /*&& i_xFlag_Print*/;
 
 
