@@ -63,6 +63,15 @@
 									 * 无意义→Qn置满分(质量单靠CK);仅作用于Qn,与CK无关
 									 * |Yang.zj+ 2026.11.10.110543(110543版误加CK记忆门槛,112204撤销) */
 
+/* CK基准保持(2026.11.23):原实现每个有效圈无条件覆盖比较基准,坏圈会成为下一圈的
+ * 比较对象——坏段后的第一个好圈被拖累判0(它在和坏圈比),好坏交替时好圈CK恒低
+ * 1 = 启用:本圈CK屏上显示0(C<0.5%)时不覆盖基准,下一圈仍与上一个非0圈比;
+ *     仅当"本圈与基准不一致、但与上一有效圈一致"时判工况改变,采纳本圈为新基准
+ *     (防工况大变后基准永不更新致CK恒0);非0圈与原行为一致
+ * 0 = 回退原行为(每个有效圈无条件覆盖基准) */
+#define KS_CONF_CK_REFHOLD		1
+#define KS_CONF_CK_HOLD_C		0.005f	/* "屏上为0"判据:屏上CK=C×100四舍五入,C<0.5%即显示0 */
+
 /* 本地位提取(避免跨头文件依赖)|wang.c+双置信度融合 2026.11.9.165510 */
 #define KS_CONF_GETBIT16(w,b)	((BYTE)(((WORD)(w)>>(b))&0x0001))
 
@@ -89,7 +98,10 @@ REAL rConfQnLastH = 0.0f;	/* 横向本圈Qn置信度 */
 /* ---------------- 模块内部状态 ---------------- */
 /* CK流状态:上一圈三档交点+本圈位移标准差s(点,<0=本圈无效)|对应opt的s_optPrevX/s_optCurS
  * 流key=(波门组,通道);色序/排列/双波门变化时整体复位(物理标记变了历史不可信)
- * |wang.c+双置信度融合 2026.11.9.165510 */
+ * |wang.c+双置信度融合 2026.11.9.165510
+ * s_afRefX=CK比较基准(上一个屏上非0圈的三档交点);s_afPrevX=上一有效圈的三档交点
+ * (重锚判定"本圈与上一圈是否一致"用)|CK基准保持 2026.11.23 */
+static REAL  s_afRefX[KS_CONF_STREAM_NUM][3];
 static REAL  s_afPrevX[KS_CONF_STREAM_NUM][3];
 static BYTE  s_xHasPrev[KS_CONF_STREAM_NUM];
 static REAL  s_afCurS[KS_CONF_STREAM_NUM];
@@ -142,12 +154,16 @@ static REAL ks_conf_qselect(REAL* a, INT n, INT k)
 /* ---------------- CK:三档交点跨圈位移一致性(移植KSOptNoteCrossings) ----------------
  * 选沿规则与误差计算严格一致:老链alrMidlinePos已按标记形式完成(梯形前沿/后沿/Line中线),
  * 三档均有效才记账;任一档无效本圈s=-1且不更新历史(与opt一致,坏圈不污染参照)
- * |wang.c+双置信度融合 2026.11.9.165510 */
-static void ks_conf_note_ck(const StSignalParsingGroupDetail* d, INT c, INT idx)
+ * |wang.c+双置信度融合 2026.11.9.165510
+ * 基准保持(KS_CONF_CK_REFHOLD=1,2026.11.23):s_afCurS记录的是"本圈相对基准s_afRefX"的
+ * 位移离散度。本圈CK屏上显示0时不覆盖基准;若此时它与上一有效圈s_afPrevX一致(新形状
+ * 已连续两圈),判工况改变并重锚。非0圈路径与原实现一致
+ * |CK基准保持(屏上0不覆盖+彼此一致重锚) 2026.11.23 */
+static void ks_conf_note_ck(const StSignalParsingGroupDetail* d, INT c, INT idx, REAL rPrecMm)
 {
-	REAL x[3], d0, d1, d2, mean, var;
+	REAL x[3], d0, d1, d2, mean, var, r;
 	INT i;
-	BYTE all = 1;
+	BYTE all = 1, xAdopt = 1;/* 本圈是否采纳为新的比较基准 */
 
 	for (i = 0; i < 3; i++)
 	{
@@ -158,18 +174,44 @@ static void ks_conf_note_ck(const StSignalParsingGroupDetail* d, INT c, INT idx)
 	{
 		if (s_xHasPrev[idx])
 		{
-			d0 = x[0] - s_afPrevX[idx][0];
-			d1 = x[1] - s_afPrevX[idx][1];
-			d2 = x[2] - s_afPrevX[idx][2];
+			d0 = x[0] - s_afRefX[idx][0];
+			d1 = x[1] - s_afRefX[idx][1];
+			d2 = x[2] - s_afRefX[idx][2];
 			mean = (d0 + d1 + d2) / 3.0f;
 			var = ((d0 - mean) * (d0 - mean) + (d1 - mean) * (d1 - mean)
 				+ (d2 - mean) * (d2 - mean)) / 2.0f;/* 样本方差(÷2=÷(3-1)) */
 			s_afCurS[idx] = sqrtf(var);
+#if KS_CONF_CK_REFHOLD
+			if (rPrecMm > 0.0f && rConfS50Mm > 0.0f)
+			{
+				r = s_afCurS[idx] * rPrecMm / rConfS50Mm;/* 本流置信度,与ks_conf_ck_conf同式 */
+				if (powf(2.0f, -r * r) < KS_CONF_CK_HOLD_C)
+				{
+					xAdopt = 0;/* 屏上为0:不覆盖基准 */
+					/* 再与上一有效圈比:一致→新形状已连续两圈,判工况改变,重锚 */
+					d0 = x[0] - s_afPrevX[idx][0];
+					d1 = x[1] - s_afPrevX[idx][1];
+					d2 = x[2] - s_afPrevX[idx][2];
+					mean = (d0 + d1 + d2) / 3.0f;
+					var = ((d0 - mean) * (d0 - mean) + (d1 - mean) * (d1 - mean)
+						+ (d2 - mean) * (d2 - mean)) / 2.0f;
+					r = sqrtf(var) * rPrecMm / rConfS50Mm;
+					if (powf(2.0f, -r * r) >= KS_CONF_CK_HOLD_C)
+					{
+						xAdopt = 1;
+					}
+				}
+			}
+#endif
+		}
+		if (xAdopt)
+		{
+			for (i = 0; i < 3; i++) s_afRefX[idx][i] = x[i];
 		}
 		for (i = 0; i < 3; i++) s_afPrevX[idx][i] = x[i];
 		s_xHasPrev[idx] = 1;
 	}
-	/* all=0:s_afCurS[idx]保持圈首置的-1(本圈无效) */
+	/* all=0:s_afCurS[idx]保持圈首置的-1(本圈无效),基准/上一圈均不更新 */
 }
 
 /* ---------------- Qn:宽度测量随机精度分数(移植KSOptCalcQn数学部分) ----------------
@@ -433,6 +475,7 @@ static INT ks_conf_blend(INT iErr, INT* piPrev, BYTE* pxHas, REAL rConf)
 /* 全状态复位|wang.c+双置信度融合 2026.11.9.165510 */
 void KS_ConfErr_Reset(void)
 {
+	memset(s_afRefX, 0, sizeof(s_afRefX));/* CK基准一并清零|CK基准保持 2026.11.23 */
 	memset(s_afPrevX, 0, sizeof(s_afPrevX));
 	memset(s_xHasPrev, 0, sizeof(s_xHasPrev));
 	memset(s_afCurS, 0, sizeof(s_afCurS));
@@ -474,6 +517,7 @@ void KS_ConfErr_Process(StAxisParam* i_pstStAxisParam,
 		 byColorFolPre != i_pstStAxisParam->byFollowColorId ||
 		 xDoublePre != (BYTE)i_pstIn->i_xFlag_Gate_double))
 	{
+		memset(s_afRefX, 0, sizeof(s_afRefX));/* CK基准一并清零|CK基准保持 2026.11.23 */
 		memset(s_afPrevX, 0, sizeof(s_afPrevX));
 		memset(s_xHasPrev, 0, sizeof(s_xHasPrev));
 	}
@@ -501,7 +545,7 @@ void KS_ConfErr_Process(StAxisParam* i_pstStAxisParam,
 		for (c = 0; c < 2; c++)
 		{
 			idx = KS_CONF_IDX(g, c);
-			ks_conf_note_ck(&i_pstOut->astStSignalParsingGroupDetail[g], c, idx);
+			ks_conf_note_ck(&i_pstOut->astStSignalParsingGroupDetail[g], c, idx, rPrecMm);
 			ks_conf_calc_qn(&i_pstOut->astStSignalParsingGroupDetail[g], c, idx, rPrecMm, dnPt);
 		}
 	}
